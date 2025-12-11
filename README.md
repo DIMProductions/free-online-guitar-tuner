@@ -13,8 +13,7 @@ This is a **free online tuner** that runs entirely in your browser using the Web
 You can try it here:
 
 **Live Demo:**  
-https://YOUR_NAME.github.io/YOUR_REPO_NAME/
-
+https://davinci.github.io/web-circle-tuner/
 ---
 
 ## Features
