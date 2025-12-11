@@ -186,6 +186,7 @@
   <div id="metrics"></div>
 </div>
 
+<!-- ===== HUD / needle ===== -->
 <script>
 (function(){
   'use strict';
@@ -195,6 +196,12 @@
   const MAX_CENTS = 50;
   const MAX_ANG   = 60 * Math.PI / 180;
   const BASE_ANG  = -Math.PI / 2;
+
+  // ロック挙動のパラメータ（ここで調整）
+  const LOCK_CENTS       = 2.0;   // ロック判定の許容 cent
+  const LOCK_ENTER_MS    = 220;   // ロックに入るまでの時間
+  const LOCK_RELEASE_MS  = 400;   // ロック解除までの時間
+  const CONF_LOCK_MIN    = 0.70;  // ロックに必要な最小Conf
 
   const canvas = document.getElementById('hudCanvas');
   if (!canvas) return;
@@ -216,7 +223,7 @@
     const a = 1 - Math.exp(-dt * hz * 2 * Math.PI);
     return prev + (next - prev) * clamp(a, 0, 1);
   }
-  function isInRange(c){ return Math.abs(c) <= 5; }
+  function isInRange(c){ return Math.abs(c) <= 5; } // 色替え用は5centのまま
   function RGBA(c, a){ return `rgba(${c.r},${c.g},${c.b},${a})`; }
 
   function analyze(f, a4ref){
@@ -273,7 +280,7 @@
   let lockLastGoodTime = 0;
 
   function updateLock(nowMs, baseLock, conf){
-    const ok = baseLock && conf >= 0.5;
+    const ok = baseLock && conf >= CONF_LOCK_MIN;
     if (ok) lockLastGoodTime = nowMs;
 
     if (lockState === "idle") {
@@ -284,11 +291,11 @@
     } else if (lockState === "locking") {
       if (!ok) {
         lockState = "idle";
-      } else if (nowMs - lockEnterTime > 150) {
+      } else if (nowMs - lockEnterTime > LOCK_ENTER_MS) {
         lockState = "locked";
       }
     } else if (lockState === "locked") {
-      if (nowMs - lockLastGoodTime > 250) {
+      if (nowMs - lockLastGoodTime > LOCK_RELEASE_MS) {
         lockState = "idle";
       }
     }
@@ -311,7 +318,7 @@
     centsSm = lowpass(centsSm, smoothCents, dt, 4);
 
     const ang = needleAngleFromCents(centsSm);
-    const baseLock = Math.abs(centsSm) <= 3;
+    const baseLock = Math.abs(centsSm) <= LOCK_CENTS; // ← ロック判定は±2cent
     const locked = updateLock(tNow, baseLock, conf);
 
     window.dpLocked = locked;
@@ -482,6 +489,7 @@
 })();
 </script>
 
+<!-- ===== tuner core ===== -->
 <script>
 (function(){
   'use strict';
@@ -489,8 +497,7 @@
   const NOTE_NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
   const A4_REF = 440.0;
 
-  const SILENCE_THRESHOLD = 0.003;  // ← ここを下げた（前: 0.01）
-
+  const SILENCE_THRESHOLD = 0.003;  // 小さい音も拾えるように調整済み
   const SHOW_DEBUG = false;
 
   function freqToNoteInfo(freq) {
