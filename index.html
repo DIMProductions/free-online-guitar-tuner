@@ -128,7 +128,7 @@
     white-space: pre;
   }
 
-  /* ==== smartphone layout ==== */
+  /* ==== スマホ用レイアウト調整 ==== */
   @media (max-width: 600px) {
     body {
       height: 100vh;
@@ -175,7 +175,7 @@
     <canvas class="hud-canvas" id="hudCanvas"></canvas>
 
     <div class="hud-ring">
-      <!-- optional SVG ring -->
+      <!-- ★★★ ここにサークルHUDのSVGを入れる ★★★ -->
     </div>
   </div>
 </div>
@@ -186,7 +186,7 @@
   <div id="metrics"></div>
 </div>
 
-<!-- ===== HUD / needle ===== -->
+<!-- ===== Circle HUD 描画 ===== -->
 <script>
 (function(){
   'use strict';
@@ -196,12 +196,6 @@
   const MAX_CENTS = 50;
   const MAX_ANG   = 60 * Math.PI / 180;
   const BASE_ANG  = -Math.PI / 2;
-
-  // ロック挙動のパラメータ（ここで調整）
-  const LOCK_CENTS       = 2.0;   // ロック判定の許容 cent
-  const LOCK_ENTER_MS    = 220;   // ロックに入るまでの時間
-  const LOCK_RELEASE_MS  = 400;   // ロック解除までの時間
-  const CONF_LOCK_MIN    = 0.70;  // ロックに必要な最小Conf
 
   const canvas = document.getElementById('hudCanvas');
   if (!canvas) return;
@@ -223,7 +217,7 @@
     const a = 1 - Math.exp(-dt * hz * 2 * Math.PI);
     return prev + (next - prev) * clamp(a, 0, 1);
   }
-  function isInRange(c){ return Math.abs(c) <= 5; } // 色替え用は5centのまま
+  function isInRange(c){ return Math.abs(c) <= 5; }
   function RGBA(c, a){ return `rgba(${c.r},${c.g},${c.b},${a})`; }
 
   function analyze(f, a4ref){
@@ -239,13 +233,14 @@
     return clamp((c / MAX_CENTS) * MAX_ANG, -MAX_ANG, MAX_ANG);
   }
 
+  // HUD が読むグローバル
   window.tunerFreq = 440;
   window.setTunerFrequency = function(f){
     if (!Number.isFinite(f) || f <= 0) return;
     window.tunerFreq = f;
   };
   window.dpConfEMA = 0;
-  window.dpLocked = false;
+  window.dpLocked = false; // ロック状態を外にも共有
 
   function getFreq() { return window.tunerFreq || 440; }
 
@@ -280,7 +275,7 @@
   let lockLastGoodTime = 0;
 
   function updateLock(nowMs, baseLock, conf){
-    const ok = baseLock && conf >= CONF_LOCK_MIN;
+    const ok = baseLock && conf >= 0.5;
     if (ok) lockLastGoodTime = nowMs;
 
     if (lockState === "idle") {
@@ -291,11 +286,11 @@
     } else if (lockState === "locking") {
       if (!ok) {
         lockState = "idle";
-      } else if (nowMs - lockEnterTime > LOCK_ENTER_MS) {
+      } else if (nowMs - lockEnterTime > 150) {
         lockState = "locked";
       }
     } else if (lockState === "locked") {
-      if (nowMs - lockLastGoodTime > LOCK_RELEASE_MS) {
+      if (nowMs - lockLastGoodTime > 250) {
         lockState = "idle";
       }
     }
@@ -318,9 +313,10 @@
     centsSm = lowpass(centsSm, smoothCents, dt, 4);
 
     const ang = needleAngleFromCents(centsSm);
-    const baseLock = Math.abs(centsSm) <= LOCK_CENTS; // ← ロック判定は±2cent
+    const baseLock = Math.abs(centsSm) <= 3;
     const locked = updateLock(tNow, baseLock, conf);
 
+    // ロック状態を共有
     window.dpLocked = locked;
 
     const w = canvas.width / DPR;
@@ -330,6 +326,7 @@
     const r  = Math.min(w, h) * 0.46;
 
     ctx.clearRect(0,0,w,h);
+
     ctx.save();
     ctx.translate(cx, cy);
 
@@ -388,6 +385,7 @@
     ctx.lineTo(Math.cos(BASE_ANG) * markR, Math.sin(BASE_ANG) * markR);
     ctx.stroke();
 
+    // ストロボ描画（針の下）
     const strobeR0 = r * 0.57;
     const strobeR1 = r * 0.83;
     const strobeSegs = 72;
@@ -419,6 +417,7 @@
       ctx.stroke();
     }
 
+    // 針描画（ストロボの上）
     const needleLen  = r * 0.78;
     const needleBack = r * 0.18;
     const needleAng  = BASE_ANG + ang;
@@ -470,6 +469,7 @@
     ctx.arc(0, 0, r * 0.38, 0, Math.PI * 2);
     ctx.fill();
 
+    // ノートを大きく、Hzを少し小さく
     ctx.fillStyle = '#e8f7ff';
     ctx.font = `${r*0.22}px "SF Mono", ui-monospace, Menlo, Consolas, monospace`;
     ctx.textAlign = 'center';
@@ -489,7 +489,7 @@
 })();
 </script>
 
-<!-- ===== tuner core ===== -->
+<!-- ===== JS Tuner (autoCorrelate) ===== -->
 <script>
 (function(){
   'use strict';
@@ -497,7 +497,7 @@
   const NOTE_NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
   const A4_REF = 440.0;
 
-  const SILENCE_THRESHOLD = 0.003;  // 小さい音も拾えるように調整済み
+  // 公開版ではデバッグ非表示
   const SHOW_DEBUG = false;
 
   function freqToNoteInfo(freq) {
@@ -520,6 +520,7 @@
   let testOsc     = null;
   let testGain    = null;
 
+  // ロック中に表示をホールドする用
   let lastLockFreq  = null;
   let lastLockNote  = "--";
   let lastLockCents = 0;
@@ -531,6 +532,7 @@
   const statusEl  = document.getElementById('status');
   const metricsEl = document.getElementById('metrics');
 
+  let lastFreq = 0; 
   function autoCorrelate(buf, sampleRate) {
     const size = buf.length;
     let rms = 0;
@@ -540,7 +542,7 @@
     }
     rms = Math.sqrt(rms / size);
 
-    if (rms < SILENCE_THRESHOLD) {
+    if (rms < 0.01) {
       return { freq: null, rms };
     }
 
@@ -719,7 +721,10 @@ Cents: ${dispCents}`;
   }
 
   async function initTuner() {
-    if (running) return;
+    if (running) {
+      console.log('[ΔPhase] already running');
+      return;
+    }
 
     startBtn.disabled = true;
     statusEl.textContent = 'Initializing…';
@@ -768,6 +773,7 @@ Cents: ${dispCents}`;
       }
 
       sourceNode = audioCtx.createMediaStreamSource(stream);
+
       gainNode = audioCtx.createGain();
       gainNode.gain.value = 1.0;
 
@@ -779,10 +785,16 @@ Cents: ${dispCents}`;
 
       running = true;
       statusEl.textContent = 'Tuning… (Aim sound at the mic)';
+      console.log('[ΔPhase] audio pipeline ready');
+
+      window.dbgAudioCtx = audioCtx;
+      window.dbgAnalyser = analyser;
+      window.dbgGainNode = gainNode;
+
       requestAnimationFrame(updateLoop);
 
     } catch (err) {
-      console.error('[Tuner] init error:', err);
+      console.error('[ΔPhase] initTuner error:', err);
       statusEl.textContent = 'Error: ' + err.message + '\nHTTPS and microphone permission are required.';
       startBtn.disabled = false;
     }
@@ -797,11 +809,14 @@ Cents: ${dispCents}`;
     
     const AC = window.AudioContext || window.webkitAudioContext;
     if (!audioCtx) audioCtx = new AC();
+    console.log('[Test] audioCtx:', audioCtx);
+    
     if (audioCtx.state === "suspended") await audioCtx.resume();
 
     analyser = audioCtx.createAnalyser();
     analyser.fftSize = 4096;
     analyser.smoothingTimeConstant = 0.0;
+    console.log('[Test] analyser created');
 
     testOsc = audioCtx.createOscillator();
     testOsc.type = "sine";
@@ -812,10 +827,12 @@ Cents: ${dispCents}`;
 
     testOsc.connect(testGain);
     testGain.connect(analyser);
+    console.log('[Test] connected: osc -> gain -> analyser');
 
     testOsc.start();
     running = true;
     statusEl.textContent = '🎵 440Hz Test...';
+    console.log('[Test] started');
     
     requestAnimationFrame(updateLoop);
   }
