@@ -602,12 +602,39 @@
       }
     }
 
-    if (bestOffset === -1) {
+       if (bestOffset === -1) {
       return { freq: null, rms };
     }
 
-    const freq = sampleRate / bestOffset;
+    // いったん通常通りの周波数を算出
+    let freq = sampleRate / bestOffset;
+
+    // ===============================
+    // ★ ギター向けオクターブ補正
+    // ===============================
+    // 中域（だいたい 150〜500Hz）で倍音を取りがちな時に、
+    // 1オクターブ下が本物っぽければそっちを採用する。
+    if (freq > 150 && freq < 500) {
+      const lagFund   = bestOffset;                 // 今拾っている周期
+      const lagDouble = lagFund * 2.0;              // 1オクターブ下の周期
+      const iFund     = Math.round(lagFund);
+      const iDouble   = Math.round(lagDouble);
+
+      if (iDouble <= maxLag && iFund >= minLag && iFund <= maxLag) {
+        const cFund   = correlations[iFund];
+        const cDouble = correlations[iDouble];
+
+        // 「2倍のラグでも相関が十分強い」＝基音がちゃんとある
+        // なら 1オクターブ下に補正する
+        if (cDouble > cFund * 0.85) {
+          bestOffset = lagDouble;
+          freq = sampleRate / bestOffset;
+        }
+      }
+    }
+
     return { freq, rms, corr: bestCorr };
+
   }
 
   function updateLoop() {
