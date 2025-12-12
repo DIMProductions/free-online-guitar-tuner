@@ -1,23 +1,67 @@
-# Free Online Guitar & Instrument Tuner (Web Audio Circle Tuner)
+# 🎸 Free Online Guitar & Instrument Tuner
 
-This is a **free online tuner** that runs entirely in your browser using the Web Audio API.
+A simple **browser-based chromatic tuner** that works on both mobile and desktop.  
+Uses your device microphone to detect pitch and display:
 
-- Works on **desktop and mobile** (uses your device microphone)
-- Supports **guitar, bass, and other monophonic instruments**
-- Shows:
-  - **Note name** (e.g. A4, C#3)
-  - **Frequency in Hz**
-  - **Cent deviation** from the nearest equal-tempered note
-- Circular HUD with a **locking needle** when you are in tune
+- Note (A4, C#3, etc.)
+- Frequency in Hz
+- Cent deviation (how sharp or flat)
+- A clean circular visual meter for tuning
 
-You can try it here:
+No installation required — just open in your browser and start tuning.
 
-**Live Demo:**  
-https://tuner.dim.productions
 ---
 
-## Features
+## 🔧 Features
 
-- No installation, **no login**, runs in the browser
-- Built with **Web Audio API** and an **autocorrelation-based pitch detection**
-- Designed to be a simple, accurate **online tuner** for everyday use
+- Works on **iPhone / Android / PC**
+- Real-time pitch display
+- Chromatic tuning (all notes)
+- Responsive circular meter
+- Lightweight single-file implementation (`index.html`)
+- Microphone-based input (HTTPS required)
+
+---
+
+## 🎮 Try It Online  
+👉 **https://tuner.dim.productions**
+
+Allow microphone access when prompted.
+
+---
+
+## 📁 Repository Structure
+
+```
+
+free-online-guitar-tuner/
+├── index.html      # main tuner
+└── README.md
+
+```
+
+---
+
+## ⚖️ License / Notice
+
+© 2025 DIMProductions.
+
+This repository contains a simple, browser-based tuning tool.  
+You may use or modify it for personal or educational purposes.  
+Commercial redistribution requires permission.
+
+```
+
+---
+
+## 🔧 Requirements
+
+- Chrome, Safari, Firefox, Edge  
+- HTTPS access (microphone APIs require secure context)
+- A device with an active microphone  
+
+---
+
+## 📬 Contact  
+For collaboration or licensing inquiries:  
+**info@dim.productions**
