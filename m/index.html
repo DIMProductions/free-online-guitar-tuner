@@ -494,7 +494,7 @@
 
   const NOTE_NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
   const A4_REF = 440.0;
-  const SHOW_DEBUG = false;
+  const SHOW_DEBUG = false; // trueにするとRMSとかも出せる
 
   function freqToNoteInfo(freq) {
     if (!freq || !Number.isFinite(freq) || freq <= 0) return null;
@@ -519,9 +519,8 @@
 
   let lastFreq = 0; 
 
-  // ===== Fender スタイル：弦テーブルとスナップ機構 =====
-  
-  // Drop C# チューニング (C#-G#-C#-F#-A#-C#)
+  // ===== Drop C# チューニング弦テーブル =====
+  // C#-G#-C#-F#-A#-C#
   const STRING_FREQS = [
     { name: "C#2", freq: 69.296, string: 6 },
     { name: "G#2", freq: 103.826, string: 5 },
@@ -537,65 +536,105 @@
   const LOCK_THRESHOLD = 3;    // 3フレームで初回ロック
   const SWITCH_THRESHOLD = 5;  // 5フレームで弦切り替え
 
-  function snapToString(freq) {
-    if (!freq || freq < 50 || freq > 400) return null;
+  // 倍音からでも基音に降りるスナップ
+  function snapToString(observedFreq) {
+    if (!observedFreq || observedFreq < 40 || observedFreq > 800) return null;
 
     let best = null;
     let bestDiff = Infinity;
-    
+
     for (const s of STRING_FREQS) {
-      const diff = Math.abs(freq - s.freq);
-      if (diff < bestDiff) {
-        bestDiff = diff;
-        best = s;
+      // 観測された周波数 / 1, /2, /4 を全部試す
+      const candFund1 = observedFreq;
+      const candFund2 = observedFreq / 2;
+      const candFund4 = observedFreq / 4;
+
+      const d1 = Math.abs(candFund1 - s.freq);
+      const d2 = Math.abs(candFund2 - s.freq);
+      const d4 = Math.abs(candFund4 - s.freq);
+
+      let useFund = candFund1;
+      let useDiff = d1;
+
+      if (d2 < useDiff) { useDiff = d2; useFund = candFund2; }
+      if (d4 < useDiff) { useDiff = d4; useFund = candFund4; }
+
+      if (useDiff < bestDiff) {
+        bestDiff = useDiff;
+        best = {
+          name: s.name,
+          stringNum: s.string,
+          targetFreq: s.freq,
+          fundFreq: useFund,
+          rawFreq: observedFreq
+        };
       }
     }
 
     if (!best) return null;
 
-    // ±1.5半音より外れてたらノイズ扱い
+    // 基音候補が ±1.5半音以内じゃなければノイズとして捨てる
     const maxSemitone = 1.5;
     const maxRatio = Math.pow(2, maxSemitone / 12);
-    
-    if (freq < best.freq / maxRatio || freq > best.freq * maxRatio) {
-      return null; // 倍音やノイズを捨てる
+
+    if (best.fundFreq < best.targetFreq / maxRatio || best.fundFreq > best.targetFreq * maxRatio) {
+      return null;
     }
 
-    const cents = 1200 * Math.log2(freq / best.freq);
-    
-    return {
-      name: best.name,
-      stringNum: best.string,
-      targetFreq: best.freq,
-      actualFreq: freq,
-      cents: cents
-    };
+    const cents = 1200 * Math.log2(best.fundFreq / best.targetFreq);
+    best.cents = cents;
+    return best;
   }
 
   function updateStringLock(snap) {
     if (!snap) {
-      // 検出失敗ならカウントリセット
+      // 検出失敗ならカウントだけ落として現ロックは維持
       if (sameStringCount > 0) sameStringCount--;
-      return currentString ? { name: currentString.name, targetFreq: currentString.targetFreq, cents: 0, locked: true } : null;
+      if (currentString) {
+        return {
+          name: currentString.name,
+          stringNum: currentString.stringNum,
+          targetFreq: currentString.targetFreq,
+          fundFreq: currentString.fundFreq || currentString.targetFreq,
+          rawFreq: currentString.rawFreq || currentString.targetFreq,
+          cents: currentString.cents || 0,
+          locked: true
+        };
+      }
+      return null;
     }
 
     if (!currentString || snap.name === currentString.name) {
-      // 同じ弦が続いてる
       sameStringCount++;
-      
       if (!currentString && sameStringCount >= LOCK_THRESHOLD) {
-        // 初回ロック
-        currentString = { name: snap.name, targetFreq: snap.targetFreq, stringNum: snap.stringNum };
+        currentString = {
+          name: snap.name,
+          stringNum: snap.stringNum,
+          targetFreq: snap.targetFreq,
+          fundFreq: snap.fundFreq,
+          rawFreq: snap.rawFreq,
+          cents: snap.cents
+        };
         console.log('[STRING LOCK] Locked to:', snap.name);
+      } else if (currentString && snap.name === currentString.name) {
+        // ロック中の更新
+        currentString.fundFreq = snap.fundFreq;
+        currentString.rawFreq  = snap.rawFreq;
+        currentString.cents    = snap.cents;
       }
     } else {
-      // 違う弦を検出
       sameStringCount = 1;
     }
 
-    // 弦切り替え判定
     if (currentString && snap.name !== currentString.name && sameStringCount >= SWITCH_THRESHOLD) {
-      currentString = { name: snap.name, targetFreq: snap.targetFreq, stringNum: snap.stringNum };
+      currentString = {
+        name: snap.name,
+        stringNum: snap.stringNum,
+        targetFreq: snap.targetFreq,
+        fundFreq: snap.fundFreq,
+        rawFreq: snap.rawFreq,
+        cents: snap.cents
+      };
       sameStringCount = 0;
       console.log('[STRING LOCK] Switched to:', snap.name);
     }
@@ -603,9 +642,11 @@
     if (currentString) {
       return {
         name: currentString.name,
+        stringNum: currentString.stringNum,
         targetFreq: currentString.targetFreq,
-        actualFreq: snap.actualFreq,
-        cents: snap.cents,
+        fundFreq: currentString.fundFreq || currentString.targetFreq,
+        rawFreq: currentString.rawFreq || currentString.targetFreq,
+        cents: currentString.cents || 0,
         locked: true
       };
     }
@@ -623,13 +664,13 @@
     }
     rms = Math.sqrt(rms / size);
 
-    // モバイル向け: かなり小さい音まで拾う
-    if (rms < 0.0025) {
+    // 感度アップ：かなり小さい音まで拾う
+    if (rms < 0.0010) {  // ← 0.0025 から下げた
       return { freq: null, rms, corr: 0 };
     }
 
-    const MIN_FREQ = 40;   // ギター/ベース用 下限
-    const MAX_FREQ = 500;  // 上限 (高すぎる倍音は無視)
+    const MIN_FREQ = 40;   // 下限
+    const MAX_FREQ = 500;  // 上限
 
     const minLag = Math.floor(sampleRate / MAX_FREQ);
     const maxLag = Math.min(Math.floor(sampleRate / MIN_FREQ), Math.floor(size / 2));
@@ -651,7 +692,6 @@
       if (correlation > 0.75 && correlation > lastCorrelation) {
         foundGood = true;
       } else if (foundGood && correlation < lastCorrelation) {
-        // 山を越えたところで抜ける
         break;
       }
 
@@ -669,7 +709,6 @@
 
     const freq = sampleRate / bestOffset;
 
-    // 想定レンジ外 (40〜500Hz) は捨てる → B5(1000Hz) みたいな誤検出を殺す
     if (freq < MIN_FREQ || freq > MAX_FREQ) {
       return { freq: null, rms, corr: 0 };
     }
@@ -685,30 +724,30 @@
     analyser.getFloatTimeDomainData(timeData);
 
     const ac = autoCorrelate(timeData, audioCtx.sampleRate);
-    let rawFreq = ac.freq;
+    let observedFreq = ac.freq;  // 生で観測された周波数（倍音でもOK）
     let rms = ac.rms || 0;
     let db = rms > 0 ? 20 * Math.log10(rms) : -120;
 
-    // Fender スタイル：弦テーブルにスナップ
-    const snap = snapToString(rawFreq);
+    // Fender風：弦テーブルにスナップ＋倍音→基音
+    const snap = snapToString(observedFreq);
     const stringInfo = updateStringLock(snap);
 
-    let freq = null;
+    let freq = null;      // HUDに渡す「基音推定値」
     let noteText = "--";
     let cents = 0;
     let instConf = 0;
 
     if (stringInfo) {
-      freq = stringInfo.actualFreq || stringInfo.targetFreq;
+      const fundFreq = stringInfo.fundFreq || stringInfo.targetFreq;
+      freq = fundFreq;
       noteText = stringInfo.name;
       cents = stringInfo.cents;
 
-      // 信頼度計算
       const centsNorm = Math.min(50, Math.abs(cents));
       const centsScore = 1 - (centsNorm / 50);
       const dbClamp = Math.max(-80, Math.min(-10, db));
       const dbNorm = (dbClamp + 80) / 70;
-      const lockBonus = stringInfo.locked ? 0.2 : 0; // ロック中はボーナス
+      const lockBonus = stringInfo.locked ? 0.2 : 0;
       instConf = Math.max(0, Math.min(1, (centsScore * 0.6 + dbNorm * 0.2 + lockBonus)));
     } else {
       freq = null;
@@ -718,14 +757,14 @@
     confEMA = (1 - alpha) * confEMA + alpha * instConf;
     if (!isFinite(confEMA)) confEMA = 0;
 
-    // HUD側には目標周波数を送る（ロック時の安定性向上）
-    if (stringInfo && stringInfo.targetFreq) {
-      if (typeof window.setTunerFrequency === 'function') {
-        window.setTunerFrequency(stringInfo.targetFreq);
-      }
-    } else if (freq) {
+    if (freq) {
       if (typeof window.setTunerFrequency === 'function') {
         window.setTunerFrequency(freq);
+      }
+      lastFreq = freq;
+    } else if (lastFreq) {
+      if (typeof window.setTunerFrequency === 'function') {
+        window.setTunerFrequency(lastFreq);
       }
     }
 
@@ -752,7 +791,6 @@ Cents: ${freq ? cents.toFixed(2) + " cents" : "--"}`;
     const nowTime = performance.now();
     const TIME_LOCK_MS = 80;
     const TIME_UNLOCK_MS = 300;
-
     const GRACE_PERIOD_MS = TIME_UNLOCK_MS;
 
     if (!window._lockTimeState) {
@@ -906,7 +944,7 @@ Cents: ${freq ? cents.toFixed(2) + " cents" : "--"}`;
       sourceNode = audioCtx.createMediaStreamSource(stream);
 
       gainNode = audioCtx.createGain();
-      gainNode.gain.value = isMobile ? 2.0 : 4.5;
+      gainNode.gain.value = isMobile ? 4.0 : 3.0; // ← モバイル感度アップ
 
       analyser = audioCtx.createAnalyser();
       analyser.fftSize = isMobile ? 2048 : 4096;
