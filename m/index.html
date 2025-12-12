@@ -128,7 +128,6 @@
     white-space: pre;
   }
 
-  /* ==== スマホ用レイアウト調整 ==== */
   @media (max-width: 600px) {
     body {
       height: 100vh;
@@ -173,9 +172,8 @@
 <div class="meter-pane">
   <div class="circle-meter-container">
     <canvas class="hud-canvas" id="hudCanvas"></canvas>
-
     <div class="hud-ring">
-      <!-- 必要ならここにSVG HUDを重ねる -->
+      <!-- 必要ならSVG HUDをここに -->
     </div>
   </div>
 </div>
@@ -233,7 +231,7 @@
     return clamp((c / MAX_CENTS) * MAX_ANG, -MAX_ANG, MAX_ANG);
   }
 
-  // HUDが読む値
+  // HUD が読むグローバル
   window.tunerFreq = 440;
   window.setTunerFrequency = function(f){
     if (!Number.isFinite(f) || f <= 0) return;
@@ -275,8 +273,7 @@
   let lockLastGoodTime = 0;
 
   function updateLock(nowMs, baseLock, conf){
-    // conf かなりゆるめ
-    const ok = baseLock && conf >= 0.15;
+    const ok = baseLock && conf >= 0.12;
     if (ok) lockLastGoodTime = nowMs;
 
     if (lockState === "idle") {
@@ -287,11 +284,11 @@
     } else if (lockState === "locking") {
       if (!ok) {
         lockState = "idle";
-      } else if (nowMs - lockEnterTime > 40) {
+      } else if (nowMs - lockEnterTime > 50) {
         lockState = "locked";
       }
     } else if (lockState === "locked") {
-      if (nowMs - lockLastGoodTime > 400) {
+      if (nowMs - lockLastGoodTime > 450) {
         lockState = "idle";
       }
     }
@@ -518,59 +515,56 @@
   const statusEl  = document.getElementById('status');
   const metricsEl = document.getElementById('metrics');
 
-  // ===== 安定版 autoCorrelate =====
+  // ===== シンプル差分 autoCorrelate =====
   function autoCorrelate(buf, sampleRate) {
-    const SIZE = buf.length;
+    const size = buf.length;
     let rms = 0;
-    for (let i = 0; i < SIZE; i++) {
+    for (let i = 0; i < size; i++) {
       const v = buf[i];
       rms += v * v;
     }
-    rms = Math.sqrt(rms / SIZE);
+    rms = Math.sqrt(rms / size);
 
-    // 感度かなり高め（0.003）…
-    if (rms < 0.003) {
+    // 感度かなり高め
+    if (rms < 0.0025) {
       return { freq: null, rms, corr: 0 };
     }
 
-    // 端の無音を少し削る（ノイズ軽減）
-    let r1 = 0, r2 = SIZE - 1;
-    const thresh = 0.002;
-    while (r1 < SIZE/2 && Math.abs(buf[r1]) < thresh) r1++;
-    while (r2 > SIZE/2 && Math.abs(buf[r2]) < thresh) r2--;
-    const trimmed = buf.slice(r1, r2);
-    const len = trimmed.length;
-    if (len < 32) {
-      return { freq: null, rms, corr: 0 };
-    }
-
-    const MAX_SAMPLES = Math.floor(len / 2);
-    const correlations = new Array(MAX_SAMPLES);
     let bestOffset = -1;
-    let bestCorr = 0;
+    let bestCorrelation = 0;
     let foundGood = false;
+    let lastCorrelation = 1;
 
-    for (let offset = 0; offset < MAX_SAMPLES; offset++) {
-      let corr = 0;
-      for (let i = 0; i < MAX_SAMPLES; i++) {
-        corr += trimmed[i] * trimmed[i + offset];
+    const MIN_SAMPLES = Math.floor(sampleRate / 1000); // 上限 1kHz
+    const MAX_SAMPLES = Math.min(Math.floor(sampleRate / 50), Math.floor(size / 2)); // 下限 50Hz くらい
+
+    for (let offset = MIN_SAMPLES; offset <= MAX_SAMPLES; offset++) {
+      let correlation = 0;
+      const count = size - offset;
+      for (let i = 0; i < count; i++) {
+        const diff = buf[i] - buf[i + offset];
+        correlation += Math.abs(diff);
       }
-      correlations[offset] = corr;
+      correlation = 1 - (correlation / count); // 0〜1
 
-      if (corr > 0.9 * correlations[0]) {
+      if (correlation > 0.75 && correlation > lastCorrelation) {
         foundGood = true;
-      }
-
-      if (foundGood && corr < correlations[offset - 1]) {
-        bestOffset = offset - 1;
-        bestCorr = correlations[offset - 1];
+      } else if (foundGood && correlation < lastCorrelation) {
+        // 山を越えたので抜ける
         break;
       }
+
+      if (correlation > bestCorrelation) {
+        bestCorrelation = correlation;
+        bestOffset = offset;
+      }
+
+      lastCorrelation = correlation;
     }
 
-    if (bestCorr > 0.001 && bestOffset > 0) {
+    if (bestCorrelation > 0.1 && bestOffset > 0) {
       const freq = sampleRate / bestOffset;
-      return { freq, rms, corr: bestCorr };
+      return { freq, rms, corr: bestCorrelation };
     }
 
     return { freq: null, rms, corr: 0 };
@@ -603,7 +597,7 @@
     }
 
     const alpha = 0.18;
-    const instConf = Math.max(0, Math.min(1, corr * 3)); // 適当にスケーリング
+    const instConf = Math.max(0, Math.min(1, corr)); // 相関そのまま
     confEMA = (1 - alpha) * confEMA + alpha * instConf;
     if (!isFinite(confEMA)) confEMA = 0;
 
@@ -619,7 +613,7 @@
       text +=
 `RMS:   ${rms.toFixed(5)}
 dBFS:  ${db.toFixed(1)}
-Corr:  ${corr.toFixed(4)}
+Corr:  ${corr.toFixed(2)}
 Conf:  ${confEMA.toFixed(2)}\n`;
     }
     text +=
@@ -686,8 +680,8 @@ Cents: ${freq ? cents.toFixed(2) + " cents" : "--"}`;
       sourceNode = audioCtx.createMediaStreamSource(stream);
 
       gainNode = audioCtx.createGain();
-      // モバイル向け：少しブースト
-      gainNode.gain.value = 4.0;
+      // モバイル用ブースト
+      gainNode.gain.value = 4.5;
 
       analyser = audioCtx.createAnalyser();
       analyser.fftSize = 4096;
