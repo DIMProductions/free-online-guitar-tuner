@@ -5,7 +5,23 @@
   <title>Free Online Guitar & Instrument Tuner</title>
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="description" content="Free online tuner that runs in your browser. Supports guitar, bass, and other instruments using your device microphone. Real-time circular HUD with note, frequency (Hz), and cent deviation.">
-
+  <script>
+    (function(){
+      try {
+        var ua = navigator.userAgent || "";
+        var isMobile = /iPhone|iPad|iPod|Android/i.test(ua);
+        // スマホで ルート (/) に来たら /m/ にリダイレクト
+        if (isMobile && !location.pathname.startsWith("/m")) {
+          var target = location.origin + "/m/";
+          if (location.href !== target) {
+            window.location.replace(target);
+          }
+        }
+      } catch (e) {
+        // 失敗しても何もしない
+      }
+    })();
+  </script>
   <style>
   * {
     margin: 0;
