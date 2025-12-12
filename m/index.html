@@ -275,7 +275,7 @@
   let lockLastGoodTime = 0;
 
   function updateLock(nowMs, baseLock, conf){
-    // ★ HyperSense: conf 緩和
+    // ★ スマホ向け：conf 緩め
     const ok = baseLock && conf >= 0.25;
     if (ok) lockLastGoodTime = nowMs;
 
@@ -287,12 +287,12 @@
     } else if (lockState === "locking") {
       if (!ok) {
         lockState = "idle";
-      // ★ HyperSense: ロックまでを速く
+      // ★ ロックまで速く
       } else if (nowMs - lockEnterTime > 50) {
         lockState = "locked";
       }
     } else if (lockState === "locked") {
-      // ★ HyperSense: ロック解除までを粘らせる
+      // ★ ロック解除まで粘らせる
       if (nowMs - lockLastGoodTime > 500) {
         lockState = "idle";
       }
@@ -316,7 +316,7 @@
     centsSm = lowpass(centsSm, smoothCents, dt, 4);
 
     const ang = needleAngleFromCents(centsSm);
-    // ★ HyperSense: ロック判定を緩める（±8セント）
+    // ★ ロック範囲ちょい広め
     const baseLock = Math.abs(centsSm) <= 8;
     const locked = updateLock(tNow, baseLock, conf);
 
@@ -536,8 +536,6 @@
   const statusEl  = document.getElementById('status');
   const metricsEl = document.getElementById('metrics');
 
-  let lastFreq = 0; 
-
   function autoCorrelate(buf, sampleRate) {
     const size = buf.length;
     let rms = 0;
@@ -547,14 +545,9 @@
     }
     rms = Math.sqrt(rms / size);
 
-    // ★ HyperSense RMS 判定
-    if (rms < 0.0015) {
+    // ★ モバイル向け：小さい音でも拾う
+    if (rms < 0.003) {
       return { freq: null, rms };
-    }
-
-    // 楽器の弱音は保持して補間
-    if (rms < 0.002) {
-      return { freq: lastFreq || null, rms };
     }
 
     const minLag = Math.floor(sampleRate / 2000);
@@ -591,8 +584,8 @@
       if (foundZeroCross) {
         if (correlations[lag] > correlations[lag - 1] && 
             correlations[lag] > correlations[lag + 1] &&
-            // ★ 超高感度：スマホは0.55〜0.65で十分
-            correlations[lag] > 0.55) {
+            // ★ 感度ちょい上げ：0.8 → 0.7
+            correlations[lag] > 0.7) {
           
           const y1 = correlations[lag - 1];
           const y2 = correlations[lag];
@@ -614,13 +607,7 @@
       return { freq: null, rms };
     }
 
-    let freq = sampleRate / bestOffset;
-
-    // ★ HyperSense smoothing (周波数EMA)
-    if (!window.freqEMA) window.freqEMA = freq;
-    window.freqEMA = window.freqEMA * 0.7 + freq * 0.3;
-    freq = window.freqEMA;
-
+    const freq = sampleRate / bestOffset;
     return { freq, rms, corr: bestCorr };
   }
 
@@ -654,10 +641,6 @@
       instConf = Math.max(0, Math.min(1, (centsScore * 0.7 + dbNorm * 0.3)));
     } else {
       freq = null;
-    }
-
-    if (freq) {
-      lastFreq = freq;
     }
 
     const alpha = 0.15;
@@ -797,7 +780,7 @@ Cents: ${dispCents}`;
       sourceNode = audioCtx.createMediaStreamSource(stream);
 
       gainNode = audioCtx.createGain();
-      // ★ スマホ最適：内部マイクは音圧が低いので大幅ブースト
+      // ★ スマホ向け：入力大きめにブースト
       gainNode.gain.value = 4.5;
 
       analyser = audioCtx.createAnalyser();
