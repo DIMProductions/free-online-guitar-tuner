@@ -2,9 +2,9 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>ΔPhase Mobile Web Tuner</title>
+  <title>Free Online Guitar & Instrument Tuner</title>
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="description" content="Mobile-friendly web tuner with chromatic mode and guitar tuning presets.">
+  <meta name="description" content="Free online tuner that runs in your browser. Supports guitar, bass, and other instruments using your device microphone. Real-time circular HUD with note, frequency (Hz), and cent deviation.">
 
   <style>
   * {
@@ -37,7 +37,7 @@
     width: 100%;
     height: 100%;
     display: block;
-    filter: drop-shadow(0 0 18px rgba(43,108,255,0.45));
+    filter: drop-shadow(0 0 18px rgba(43,108,255,.45));
     z-index: 1;
   }
 
@@ -47,7 +47,7 @@
     display: grid;
     place-items: center;
     pointer-events: none;
-    filter: drop-shadow(0 0 10px rgba(0,255,255,0.12));
+    filter: drop-shadow(0 0 10px rgba(0,255,255,.12));
     z-index: 0;
   }
 
@@ -63,8 +63,8 @@
     width: 100%;
     max-width: 520px;
     margin-top: 20px;
-    padding: 10px 12px 14px;
-    border-radius: 18px;
+    padding: 10px 12px 16px;
+    border-radius: 999px;
     background:
       radial-gradient(circle at 0 0, rgba(0,180,255,0.12) 0, transparent 45%),
       radial-gradient(circle at 100% 100%, rgba(255,100,180,0.08) 0, transparent 50%),
@@ -75,39 +75,11 @@
       0 16px 40px rgba(0,0,0,0.85);
     display: flex;
     flex-direction: column;
-    align-items: stretch;
+    align-items: center;
     gap: 6px;
   }
 
-  .tuning-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-    margin-bottom: 4px;
-  }
-
-  .tuning-label {
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.12em;
-    color: #5fa2b8;
-  }
-
-  #tuningSelect {
-    flex: 1;
-    padding: 5px 10px;
-    border-radius: 999px;
-    border: 1px solid rgba(0,255,255,0.35);
-    background: radial-gradient(circle at 0 0, #021019 0, #01060a 55%, #000 100%);
-    color: #d8f3ff;
-    font-size: 11px;
-    outline: none;
-    appearance: none;
-  }
-
   #startBtn {
-    margin-top: 2px;
     padding: 8px 18px;
     border-radius: 999px;
     border: 1px solid rgba(0,255,255,0.7);
@@ -124,7 +96,6 @@
     cursor: pointer;
     display: inline-flex;
     align-items: center;
-    justify-content: center;
     gap: 6px;
   }
 
@@ -143,20 +114,21 @@
   }
 
   #status {
-    font-size: 12px;
+    font-size: 14px;
     color: #79bcd1;
     text-align: center;
   }
 
   #metrics {
-    margin-top: 4px;
-    font-size: 10px;
+    margin-top: 12px;
+    font-size: 11px;
     color: #5a8a9a;
     text-align: center;
     font-family: ui-monospace, monospace;
     white-space: pre;
   }
 
+  /* ==== スマホ用レイアウト調整 ==== */
   @media (max-width: 600px) {
     body {
       height: 100vh;
@@ -173,24 +145,25 @@
 
     .control-strip {
       max-width: 420px;
-      margin-top: 12px;
-      padding: 8px 10px 10px;
-      border-radius: 16px;
+      margin-top: 14px;
+      padding: 8px 12px 12px;
+      border-radius: 24px;
       gap: 4px;
     }
 
     #startBtn {
       width: 100%;
+      justify-content: center;
       font-size: 12px;
-      padding: 9px 10px;
+      padding: 10px 12px;
     }
 
     #status {
-      font-size: 11px;
+      font-size: 12px;
     }
 
     #metrics {
-      font-size: 9px;
+      font-size: 10px;
     }
   }
   </style>
@@ -200,22 +173,14 @@
 <div class="meter-pane">
   <div class="circle-meter-container">
     <canvas class="hud-canvas" id="hudCanvas"></canvas>
+
     <div class="hud-ring">
-      <!-- HUD SVG を入れるならここ -->
+      <!-- ★★★ ここにサークルHUDのSVGを入れる ★★★ -->
     </div>
   </div>
 </div>
 
 <div class="control-strip">
-  <div class="tuning-row">
-    <div class="tuning-label">TUNING</div>
-    <select id="tuningSelect">
-      <option value="chromatic">Chromatic (any note)</option>
-      <option value="gtr_std">Guitar - Standard (EADGBE)</option>
-      <option value="gtr_drop_csharp" selected>Guitar - Drop C# (C# G# C# F# A# C#)</option>
-    </select>
-  </div>
-
   <button id="startBtn">TAP TO START TUNER</button>
   <div id="status">Idle</div>
   <div id="metrics"></div>
@@ -255,30 +220,39 @@
   function isInRange(c){ return Math.abs(c) <= 5; }
   function RGBA(c, a){ return `rgba(${c.r},${c.g},${c.b},${a})`; }
 
-  // HUD が読むグローバル
-  window.tunerFreq  = 440;
-  window.tunerNote  = 'A4';
-  window.tunerCents = 0;
-  window.dpConfEMA  = 0;
-  window.dpLocked   = false;
+  function analyze(f, a4ref){
+    const midi = Math.round(69 + 12 * Math.log2(f / a4ref));
+    const note = NOTE[(midi % 12 + 12) % 12];
+    const oct  = Math.floor(midi / 12) -1;
+    const target = a4ref * Math.pow(2, (midi - 69) / 12);
+    const cents  = 1200 * Math.log2(f / target);
+    return { note, oct, target, cents, adjCents: cents };
+  }
 
-  window.setTunerState = function(freq, noteLabel, cents){
-    if (!Number.isFinite(freq) || freq <= 0) return;
-    window.tunerFreq  = freq;
-    window.tunerNote  = noteLabel || '';
-    window.tunerCents = cents || 0;
+  function needleAngleFromCents(c){
+    return clamp((c / MAX_CENTS) * MAX_ANG, -MAX_ANG, MAX_ANG);
+  }
+
+  // HUD が読むグローバル
+  window.tunerFreq = 440;
+  window.setTunerFrequency = function(f){
+    if (!Number.isFinite(f) || f <= 0) return;
+    window.tunerFreq = f;
   };
+  window.dpConfEMA = 0;
+  window.dpLocked = false;
 
   function getFreq() { return window.tunerFreq || 440; }
 
-  let tPrev   = performance.now();
+  let tPrev = performance.now();
   let centsSm = 0;
 
   const centsSamples = [];
   const MAX_SAMPLES = 9;
 
   function pushCentsSample(c, conf){
-    if (conf < 0.2) {
+    // ★ ロック用のサンプルも少し緩めに拾う
+    if (conf < 0.25) {
       centsSamples.length = 0;
       return;
     }
@@ -297,12 +271,13 @@
     return sum / centsSamples.length;
   }
 
-  let lockState       = "idle";
-  let lockEnterTime   = 0;
-  let lockLastGoodTime= 0;
+  let lockState = "idle";
+  let lockEnterTime = 0;
+  let lockLastGoodTime = 0;
 
   function updateLock(nowMs, baseLock, conf){
-    const ok = baseLock && conf >= 0.20;
+    // ★ スマホ用：信頼度しきい値ちょい緩め
+    const ok = baseLock && conf >= 0.22;
     if (ok) lockLastGoodTime = nowMs;
 
     if (lockState === "idle") {
@@ -313,11 +288,11 @@
     } else if (lockState === "locking") {
       if (!ok) {
         lockState = "idle";
-      } else if (nowMs - lockEnterTime > 80) {
+      } else if (nowMs - lockEnterTime > 50) {
         lockState = "locked";
       }
     } else if (lockState === "locked") {
-      if (nowMs - lockLastGoodTime > 400) {
+      if (nowMs - lockLastGoodTime > 500) {
         lockState = "idle";
       }
     }
@@ -329,9 +304,22 @@
     const dt   = (tNow - tPrev) / 1000;
     tPrev = tNow;
 
-    const freq  = getFreq();
-    const noteL = window.tunerNote || '';
-    const cents = window.tunerCents || 0;
+    const freq = getFreq();
+    const info = analyze(freq, a4);
+    const conf = clamp(window.dpConfEMA || 0, 0, 1);
+
+    const rawCents = clamp(info.adjCents, -MAX_CENTS, MAX_CENTS);
+    pushCentsSample(rawCents, conf);
+    const smoothCents = getSmoothedCents();
+
+    centsSm = lowpass(centsSm, smoothCents, dt, 4);
+
+    const ang = needleAngleFromCents(centsSm);
+    // ★ ロック範囲少し広め
+    const baseLock = Math.abs(centsSm) <= 10;
+    const locked = updateLock(tNow, baseLock, conf);
+
+    window.dpLocked = locked;
 
     const w = canvas.width / DPR;
     const h = canvas.height / DPR;
@@ -339,21 +327,8 @@
     const cy = h * 0.5;
     const r  = Math.min(w, h) * 0.46;
 
-    const conf = clamp(window.dpConfEMA || 0, 0, 1);
-
-    const rawCents = clamp(cents, -MAX_CENTS, MAX_CENTS);
-    pushCentsSample(rawCents, conf);
-    const smoothCents = getSmoothedCents();
-
-    centsSm = lowpass(centsSm, smoothCents, dt, 4);
-
-    const ang = (centsSm / MAX_CENTS) * MAX_ANG;
-    const baseLock = Math.abs(centsSm) <= 8;
-    const locked = updateLock(tNow, baseLock, conf);
-
-    window.dpLocked = locked;
-
     ctx.clearRect(0,0,w,h);
+
     ctx.save();
     ctx.translate(cx, cy);
 
@@ -412,15 +387,16 @@
     ctx.lineTo(Math.cos(BASE_ANG) * markR, Math.sin(BASE_ANG) * markR);
     ctx.stroke();
 
-    const MAX_STROBE_SEG = 72;
+    // ストロボ
     const strobeR0 = r * 0.57;
     const strobeR1 = r * 0.83;
+    const strobeSegs = 72;
     const angNeedle12 = BASE_ANG + ang;
     const focusSigma = locked ? 0.23 : 0.35;
-    const dashAng = (Math.PI * 2) / MAX_STROBE_SEG * 0.7;
+    const dashAng = (Math.PI * 2) / strobeSegs * 0.7;
 
-    for (let i = 0; i < MAX_STROBE_SEG; i++){
-      const phi = -Math.PI + (i + 0.5) * ((Math.PI * 2) / MAX_STROBE_SEG) + BASE_ANG;
+    for (let i = 0; i < strobeSegs; i++){
+      const phi = -Math.PI + (i + 0.5) * ((Math.PI * 2) / strobeSegs) + BASE_ANG;
       const d   = Math.atan2(Math.sin(phi - angNeedle12), Math.cos(phi - angNeedle12));
       const weight = Math.exp(-(d * d) / (2 * focusSigma * focusSigma));
       const a0 = phi - dashAng * 0.7;
@@ -443,6 +419,7 @@
       ctx.stroke();
     }
 
+    // 針
     const needleLen  = r * 0.78;
     const needleBack = r * 0.18;
     const needleAng  = BASE_ANG + ang;
@@ -494,14 +471,13 @@
     ctx.arc(0, 0, r * 0.38, 0, Math.PI * 2);
     ctx.fill();
 
-    const noteToShow = noteL || '--';
     ctx.fillStyle = '#e8f7ff';
     ctx.font = `${r*0.22}px "SF Mono", ui-monospace, Menlo, Consolas, monospace`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(noteToShow, 0, r * 0.10);
+    ctx.fillText(`${info.note}${info.oct}`, 0, r * 0.10);
 
-    ctx.fillStyle = 'rgba(120,200,255,0.9)';
+    ctx.fillStyle = 'rgba(120,200,255,0.9)`;
     ctx.font = `${r*0.11}px "SF Mono", ui-monospace`;
     ctx.fillText(`${freq.toFixed(2)} Hz`, 0, -r * 0.10);
 
@@ -514,14 +490,14 @@
 })();
 </script>
 
-<!-- ===== JS Tuner (クロマチック＋Tuningスナップ) ===== -->
+<!-- ===== JS Tuner (autoCorrelate) ===== -->
 <script>
 (function(){
   'use strict';
 
   const NOTE_NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
   const A4_REF = 440.0;
-  const SHOW_DEBUG = false; // trueにするとRMSなども表示
+  const SHOW_DEBUG = false;
 
   function freqToNoteInfo(freq) {
     if (!freq || !Number.isFinite(freq) || freq <= 0) return null;
@@ -530,78 +506,7 @@
     const octave = Math.floor(midi / 12) -1;
     const target = A4_REF * Math.pow(2, (midi - 69) / 12);
     const cents = 1200 * Math.log2(freq / target);
-    return { note: noteName, oct: octave, cents, target };
-  }
-
-  // Tuning プリセット
-  const TUNINGS = {
-    chromatic: {
-      id: 'chromatic',
-      label: 'Chromatic',
-      strings: null
-    },
-    gtr_std: {
-      id: 'gtr_std',
-      label: 'Guitar - Standard',
-      strings: [
-        { name: 'E2', freq: 82.41, string: 6 },
-        { name: 'A2', freq: 110.00, string: 5 },
-        { name: 'D3', freq: 146.83, string: 4 },
-        { name: 'G3', freq: 196.00, string: 3 },
-        { name: 'B3', freq: 246.94, string: 2 },
-        { name: 'E4', freq: 329.63, string: 1 }
-      ]
-    },
-    gtr_drop_csharp: {
-      id: 'gtr_drop_csharp',
-      label: 'Guitar - Drop C#',
-      strings: [
-        { name: 'C#2', freq: 69.30, string: 6 },
-        { name: 'G#2', freq: 103.83, string: 5 },
-        { name: 'C#3', freq: 138.59, string: 4 },
-        { name: 'F#3', freq: 185.00, string: 3 },
-        { name: 'A#3', freq: 233.08, string: 2 },
-        { name: 'C#4', freq: 277.18, string: 1 }
-      ]
-    }
-  };
-
-  // rawFreq から、f / f2 / f4 を試して最も近い弦にスナップ
-  function snapToTuning(rawFreq, tuning){
-    if (!tuning || !tuning.strings || !rawFreq) return null;
-
-    const candidates = [rawFreq, rawFreq / 2, rawFreq / 4];
-    let best = null;
-    let bestDiff = Infinity;
-
-    for (const cFreq of candidates) {
-      if (!cFreq || cFreq < 40 || cFreq > 1000) continue;
-      for (const s of tuning.strings) {
-        const diff = Math.abs(cFreq - s.freq);
-        if (diff < bestDiff) {
-          bestDiff = diff;
-          best = {
-            string: s.string,
-            name: s.name,
-            targetFreq: s.freq,
-            fundFreq: cFreq
-          };
-        }
-      }
-    }
-
-    if (!best) return null;
-
-    // ±1.5半音より外れてたらノイズ扱い
-    const maxSemi  = 1.5;
-    const maxRatio = Math.pow(2, maxSemi / 12);
-    if (best.fundFreq < best.targetFreq / maxRatio ||
-        best.fundFreq > best.targetFreq * maxRatio) {
-      return null;
-    }
-
-    best.cents = 1200 * Math.log2(best.fundFreq / best.targetFreq);
-    return best;
+    return { note: noteName, oct: octave, cents };
   }
 
   let audioCtx    = null;
@@ -610,21 +515,17 @@
   let analyser    = null;
   let running     = false;
   let confEMA     = 0;
-  let lastGood    = null;
-  let currentTuningId = 'gtr_drop_csharp';
 
-  const startBtn     = document.getElementById('startBtn');
-  const statusEl     = document.getElementById('status');
-  const metricsEl    = document.getElementById('metrics');
-  const tuningSelect = document.getElementById('tuningSelect');
+  let lastLockFreq  = null;
+  let lastLockNote  = "--";
+  let lastLockCents = 0;
+  let wasLocked = false;
+  let lockReleaseTime = 0;
+  const GRACE_PERIOD_MS = 500;
 
-  if (tuningSelect) {
-    currentTuningId = tuningSelect.value || 'gtr_drop_csharp';
-    tuningSelect.value = currentTuningId;
-    tuningSelect.addEventListener('change', () => {
-      currentTuningId = tuningSelect.value || 'chromatic';
-    });
-  }
+  const startBtn  = document.getElementById('startBtn');
+  const statusEl  = document.getElementById('status');
+  const metricsEl = document.getElementById('metrics');
 
   function autoCorrelate(buf, sampleRate) {
     const size = buf.length;
@@ -635,55 +536,70 @@
     }
     rms = Math.sqrt(rms / size);
 
-    // 小さすぎる音は切る（フェンダー寄り）
-    if (rms < 0.0020) {
-      return { freq: null, rms, corr: 0 };
+    // ★ 感度さらに少しUP（0.003 → 0.002）
+    if (rms < 0.002) {
+      return { freq: null, rms };
     }
 
-    const MIN_FREQ = 40;
-    const MAX_FREQ = 1200;
-
-    const minLag = Math.floor(sampleRate / MAX_FREQ);
-    const maxLag = Math.min(Math.floor(sampleRate / MIN_FREQ), Math.floor(size / 2));
-
-    let bestOffset = -1;
-    let bestCorrelation = 0;
-    let foundGood = false;
-    let lastCorrelation = 1;
+    const minLag = Math.floor(sampleRate / 2000);
+    const maxLag = Math.floor(sampleRate / 60);
+    
+    const correlations = new Float32Array(maxLag + 1);
+    let maxCorr = 0;
 
     for (let lag = minLag; lag <= maxLag; lag++) {
-      let correlation = 0;
+      let corr = 0;
       const corrLen = size - lag;
       for (let i = 0; i < corrLen; i++) {
-        const diff = buf[i] - buf[i + lag];
-        correlation += Math.abs(diff);
+        corr += buf[i] * buf[i + lag];
       }
-      correlation = 1 - (correlation / corrLen);
-
-      if (correlation > 0.75 && correlation > lastCorrelation) {
-        foundGood = true;
-      } else if (foundGood && correlation < lastCorrelation) {
-        break;
-      }
-
-      if (correlation > bestCorrelation) {
-        bestCorrelation = correlation;
-        bestOffset = lag;
-      }
-
-      lastCorrelation = correlation;
+      correlations[lag] = corr / corrLen;
+      if (correlations[lag] > maxCorr) maxCorr = correlations[lag];
     }
 
-    if (bestOffset <= 0 || bestCorrelation < 0.1) {
-      return { freq: null, rms, corr: 0 };
+    if (maxCorr > 0) {
+      for (let lag = minLag; lag <= maxLag; lag++) {
+        correlations[lag] /= maxCorr;
+      }
+    }
+
+    let foundZeroCross = false;
+    let bestOffset = -1;
+    let bestCorr = 0;
+
+    for (let lag = minLag + 1; lag < maxLag - 1; lag++) {
+      if (!foundZeroCross && correlations[lag - 1] < 0 && correlations[lag] >= 0) {
+        foundZeroCross = true;
+      }
+      
+      if (foundZeroCross) {
+        if (correlations[lag] > correlations[lag - 1] && 
+            correlations[lag] > correlations[lag + 1] &&
+            // ★ 相関しきい値も少し緩く（0.7 → 0.65）
+            correlations[lag] > 0.65) {
+          
+          const y1 = correlations[lag - 1];
+          const y2 = correlations[lag];
+          const y3 = correlations[lag + 1];
+          const denom = y1 - 2 * y2 + y3;
+          if (Math.abs(denom) > 1e-6) {
+            const offset = (y1 - y3) / (2 * denom);
+            bestOffset = lag + offset;
+          } else {
+            bestOffset = lag;
+          }
+          bestCorr = correlations[lag];
+          break;
+        }
+      }
+    }
+
+    if (bestOffset === -1) {
+      return { freq: null, rms };
     }
 
     const freq = sampleRate / bestOffset;
-    if (freq < MIN_FREQ || freq > MAX_FREQ) {
-      return { freq: null, rms, corr: 0 };
-    }
-
-    return { freq, rms, corr: bestCorrelation };
+    return { freq, rms, corr: bestCorr };
   }
 
   function updateLoop() {
@@ -694,69 +610,92 @@
     analyser.getFloatTimeDomainData(timeData);
 
     const ac = autoCorrelate(timeData, audioCtx.sampleRate);
-    const rawFreq = ac.freq;
-    const rms = ac.rms || 0;
-    const db  = rms > 0 ? 20 * Math.log10(rms) : -120;
+    let freq = ac.freq;
+    let rms = ac.rms || 0;
+    let db = rms > 0 ? 20 * Math.log10(rms) : -120;
 
-    const tuning = TUNINGS[currentTuningId] || TUNINGS.chromatic;
-
-    let chromFreq   = null;
-    let chromNote   = '--';
-    let chromCents  = 0;
-
-    if (rawFreq && rawFreq > 20 && rawFreq < 5000) {
-      const info = freqToNoteInfo(rawFreq);
-      if (info) {
-        chromFreq  = rawFreq;
-        chromNote  = `${info.note}${info.oct}`;
-        chromCents = info.cents;
-      }
-    }
-
-    let finalFreq   = chromFreq;
-    let finalNote   = chromNote;
-    let finalCents  = chromCents;
-
-    if (rawFreq && tuning.strings) {
-      const snapped = snapToTuning(rawFreq, tuning);
-      if (snapped) {
-        finalFreq   = snapped.fundFreq;
-        finalNote   = snapped.name;
-        finalCents  = snapped.cents;
-      }
-    }
-
-    if (finalFreq && finalNote !== '--') {
-      lastGood = {
-        freq: finalFreq,
-        note: finalNote,
-        cents: finalCents,
-        time: performance.now()
-      };
-    } else if (!finalFreq && lastGood && (performance.now() - lastGood.time) < 300) {
-      // 音が途切れても 300ms は最後の値を保持
-      finalFreq  = lastGood.freq;
-      finalNote  = lastGood.note;
-      finalCents = lastGood.cents;
-    }
-
+    let noteText = "--";
+    let cents = 0;
     let instConf = 0;
-    if (finalFreq) {
-      const centsNorm = Math.min(50, Math.abs(finalCents));
+
+    if (freq && freq > 20 && freq < 5000) {
+      const info = freqToNoteInfo(freq);
+      if (info) {
+        noteText = `${info.note}${info.oct}`;
+        cents = info.cents;
+      }
+
+      const centsNorm = Math.min(50, Math.abs(cents));
       const centsScore = 1 - (centsNorm / 50);
       const dbClamp = Math.max(-80, Math.min(-10, db));
       const dbNorm = (dbClamp + 80) / 70;
-      instConf = Math.max(0, Math.min(1, centsScore * 0.7 + dbNorm * 0.3));
+      instConf = Math.max(0, Math.min(1, (centsScore * 0.7 + dbNorm * 0.3)));
+    } else {
+      freq = null;
     }
 
     const alpha = 0.15;
     confEMA = (1 - alpha) * confEMA + alpha * instConf;
     if (!isFinite(confEMA)) confEMA = 0;
+
+    if (freq) {
+      if (typeof window.setTunerFrequency === 'function') {
+        window.setTunerFrequency(freq);
+      }
+    }
     window.dpConfEMA = confEMA;
 
-    if (finalFreq) {
-      window.setTunerState(finalFreq, finalNote, finalCents);
+    const lockedNow = (window.dpLocked === true);
+    const nowTime = performance.now();
+
+    const justLocked = lockedNow && !wasLocked;
+    const justUnlocked = !lockedNow && wasLocked;
+
+    if (justUnlocked) {
+      lockReleaseTime = nowTime;
     }
+
+    const inGracePeriod = (nowTime - lockReleaseTime) < GRACE_PERIOD_MS;
+
+    if (freq && noteText !== "--" && confEMA > 0.3) {
+      lastLockFreq  = freq;
+      lastLockNote  = noteText;
+      lastLockCents = cents;
+    }
+
+    if (justLocked && lastLockFreq === null) {
+      const hudFreq = window.tunerFreq;
+      if (hudFreq && hudFreq !== 440) {
+        const hudInfo = freqToNoteInfo(hudFreq);
+        if (hudInfo) {
+          lastLockFreq = hudFreq;
+          lastLockNote = `${hudInfo.note}${hudInfo.oct}`;
+          lastLockCents = hudInfo.cents;
+        }
+      }
+    }
+
+    let dispFreq, dispNote, dispCents;
+
+    if ((lockedNow || inGracePeriod) && lastLockFreq !== null) {
+      dispFreq  = lastLockFreq.toFixed(2) + " Hz";
+      dispNote  = lastLockNote;
+      dispCents = lastLockCents.toFixed(2) + " cents";
+    } else if (freq && noteText !== "--") {
+      dispFreq  = freq.toFixed(2) + " Hz";
+      dispNote  = noteText;
+      dispCents = cents.toFixed(2) + " cents";
+    } else if (!freq && lastLockFreq !== null) {
+      dispFreq  = lastLockFreq.toFixed(2) + " Hz";
+      dispNote  = lastLockNote;
+      dispCents = lastLockCents.toFixed(2) + " cents";
+    } else {
+      dispFreq  = "--";
+      dispNote  = "--";
+      dispCents = "--";
+    }
+
+    wasLocked = lockedNow;
 
     let text = '';
     if (SHOW_DEBUG) {
@@ -766,9 +705,9 @@ dBFS:  ${db.toFixed(1)}
 Conf:  ${confEMA.toFixed(2)}\n`;
     }
     text +=
-`Freq:  ${finalFreq ? finalFreq.toFixed(2) + " Hz" : "--"}
-Note:  ${finalNote}
-Cents: ${finalFreq ? finalCents.toFixed(2) + " cents" : "--"}`;
+`Freq:  ${dispFreq}
+Note:  ${dispNote}
+Cents: ${dispCents}`;
 
     if (metricsEl) {
       metricsEl.textContent = text;
@@ -804,8 +743,6 @@ Cents: ${finalFreq ? finalCents.toFixed(2) + " cents" : "--"}`;
         }
       };
 
-      const isMobile = /Android|webOS|iPhone|iPad|iPod/i.test(navigator.userAgent);
-
       const gUM = getUserMedia({
         audio: {
           channelCount: 1,
@@ -830,20 +767,22 @@ Cents: ${finalFreq ? finalCents.toFixed(2) + " cents" : "--"}`;
 
       sourceNode = audioCtx.createMediaStreamSource(stream);
 
-      gainNode = new GainNode(audioCtx);
-      gainNode.gain.value = isMobile ? 3.0 : 2.5;
+      gainNode = audioCtx.createGain();
+
+      const isMobile = /Android|webOS|iPhone|iPad|iPod/i.test(navigator.userAgent);
+      // ★ モバイルは強めブースト、PCは控えめ
+      gainNode.gain.value = isMobile ? 6.0 : 3.5;
 
       analyser = audioCtx.createAnalyser();
-      analyser.fftSize = isMobile ? 2048 : 4096;
-      analyser.smoothingTimeConstant = 0;
+      analyser.fftSize = 2048;
 
       sourceNode.connect(gainNode);
       gainNode.connect(analyser);
 
       running = true;
       statusEl.textContent = isMobile
-        ? 'Tuning... (hold phone near the guitar)'
-        : 'Tuning...';
+        ? 'Tuning… (Hold your phone near the instrument)'
+        : 'Tuning…';
 
       requestAnimationFrame(updateLoop);
 
@@ -854,12 +793,9 @@ Cents: ${finalFreq ? finalCents.toFixed(2) + " cents" : "--"}`;
     }
   }
 
-  if (startBtn) {
-    startBtn.addEventListener('click', () => {
-      initTuner();
-    });
-  }
-
+  startBtn.addEventListener('click', () => {
+    initTuner();
+  });
 })();
 </script>
 
