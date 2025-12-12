@@ -201,7 +201,7 @@
   <div class="circle-meter-container">
     <canvas class="hud-canvas" id="hudCanvas"></canvas>
     <div class="hud-ring">
-      <!-- SVG HUD を突っ込むならここ -->
+      <!-- HUD SVG を入れるならここ -->
     </div>
   </div>
 </div>
@@ -212,7 +212,7 @@
     <select id="tuningSelect">
       <option value="chromatic">Chromatic (any note)</option>
       <option value="gtr_std">Guitar - Standard (EADGBE)</option>
-      <option value="gtr_drop_csharp">Guitar - Drop C# (C# G# C# F# A# C#)</option>
+      <option value="gtr_drop_csharp" selected>Guitar - Drop C# (C# G# C# F# A# C#)</option>
     </select>
   </div>
 
@@ -255,36 +255,23 @@
   function isInRange(c){ return Math.abs(c) <= 5; }
   function RGBA(c, a){ return `rgba(${c.r},${c.g},${c.b},${a})`; }
 
-  function analyze(f, a4ref){
-    const midi = Math.round(69 + 12 * Math.log2(f / a4ref));
-    const note = NOTE[(midi % 12 + 12) % 12];
-    const oct  = Math.floor(midi / 12) -1;
-    const target = a4ref * Math.pow(2, (midi - 69) / 12);
-    const cents  = 1200 * Math.log2(f / target);
-    return { note, oct, target, cents, adjCents: cents };
-  }
-
-  function needleAngleFromCents(c){
-    return clamp((c / MAX_CENTS) * MAX_ANG, -MAX_ANG, MAX_ANG);
-  }
-
   // HUD が読むグローバル
-  window.tunerFreq = 440;
-  window.tunerNote = 'A4';
+  window.tunerFreq  = 440;
+  window.tunerNote  = 'A4';
   window.tunerCents = 0;
-  window.dpConfEMA = 0;
-  window.dpLocked = false;
+  window.dpConfEMA  = 0;
+  window.dpLocked   = false;
 
   window.setTunerState = function(freq, noteLabel, cents){
     if (!Number.isFinite(freq) || freq <= 0) return;
-    window.tunerFreq = freq;
-    window.tunerNote = noteLabel || '';
+    window.tunerFreq  = freq;
+    window.tunerNote  = noteLabel || '';
     window.tunerCents = cents || 0;
   };
 
   function getFreq() { return window.tunerFreq || 440; }
 
-  let tPrev = performance.now();
+  let tPrev   = performance.now();
   let centsSm = 0;
 
   const centsSamples = [];
@@ -310,9 +297,9 @@
     return sum / centsSamples.length;
   }
 
-  let lockState = "idle";
-  let lockEnterTime = 0;
-  let lockLastGoodTime = 0;
+  let lockState       = "idle";
+  let lockEnterTime   = 0;
+  let lockLastGoodTime= 0;
 
   function updateLock(nowMs, baseLock, conf){
     const ok = baseLock && conf >= 0.20;
@@ -360,14 +347,13 @@
 
     centsSm = lowpass(centsSm, smoothCents, dt, 4);
 
-    const ang = needleAngleFromCents(centsSm);
+    const ang = (centsSm / MAX_CENTS) * MAX_ANG;
     const baseLock = Math.abs(centsSm) <= 8;
     const locked = updateLock(tNow, baseLock, conf);
 
     window.dpLocked = locked;
 
     ctx.clearRect(0,0,w,h);
-
     ctx.save();
     ctx.translate(cx, cy);
 
@@ -528,14 +514,14 @@
 })();
 </script>
 
-<!-- ===== JS Tuner (クロマチック + Tuningスナップ) ===== -->
+<!-- ===== JS Tuner (クロマチック＋Tuningスナップ) ===== -->
 <script>
 (function(){
   'use strict';
 
   const NOTE_NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
   const A4_REF = 440.0;
-  const SHOW_DEBUG = false;
+  const SHOW_DEBUG = false; // trueにするとRMSなども表示
 
   function freqToNoteInfo(freq) {
     if (!freq || !Number.isFinite(freq) || freq <= 0) return null;
@@ -580,18 +566,16 @@
     }
   };
 
-  function snapToTuning(freq, tuning){
-    if (!tuning || !tuning.strings || !freq) return null;
+  // rawFreq から、f / f2 / f4 を試して最も近い弦にスナップ
+  function snapToTuning(rawFreq, tuning){
+    if (!tuning || !tuning.strings || !rawFreq) return null;
 
+    const candidates = [rawFreq, rawFreq / 2, rawFreq / 4];
     let best = null;
     let bestDiff = Infinity;
 
-    // 倍音側からしか取れないこともあるので 1, 1/2, 1/4 試す
-    const candidates = [freq, freq / 2, freq / 4];
-
     for (const cFreq of candidates) {
       if (!cFreq || cFreq < 40 || cFreq > 1000) continue;
-
       for (const s of tuning.strings) {
         const diff = Math.abs(cFreq - s.freq);
         if (diff < bestDiff) {
@@ -608,16 +592,15 @@
 
     if (!best) return null;
 
-    // ±1.5半音以上ズレてたらノイズ扱い
-    const maxSemi = 1.5;
+    // ±1.5半音より外れてたらノイズ扱い
+    const maxSemi  = 1.5;
     const maxRatio = Math.pow(2, maxSemi / 12);
     if (best.fundFreq < best.targetFreq / maxRatio ||
         best.fundFreq > best.targetFreq * maxRatio) {
       return null;
     }
 
-    const cents = 1200 * Math.log2(best.fundFreq / best.targetFreq);
-    best.cents = cents;
+    best.cents = 1200 * Math.log2(best.fundFreq / best.targetFreq);
     return best;
   }
 
@@ -627,15 +610,17 @@
   let analyser    = null;
   let running     = false;
   let confEMA     = 0;
-  let lastFreq    = 0;
-  let currentTuningId = 'chromatic';
+  let lastGood    = null;
+  let currentTuningId = 'gtr_drop_csharp';
 
-  const startBtn    = document.getElementById('startBtn');
-  const statusEl    = document.getElementById('status');
-  const metricsEl   = document.getElementById('metrics');
-  const tuningSelect= document.getElementById('tuningSelect');
+  const startBtn     = document.getElementById('startBtn');
+  const statusEl     = document.getElementById('status');
+  const metricsEl    = document.getElementById('metrics');
+  const tuningSelect = document.getElementById('tuningSelect');
 
   if (tuningSelect) {
+    currentTuningId = tuningSelect.value || 'gtr_drop_csharp';
+    tuningSelect.value = currentTuningId;
     tuningSelect.addEventListener('change', () => {
       currentTuningId = tuningSelect.value || 'chromatic';
     });
@@ -650,13 +635,13 @@
     }
     rms = Math.sqrt(rms / size);
 
-    // 感度：フェンダー寄り（小さすぎる音は切る）
+    // 小さすぎる音は切る（フェンダー寄り）
     if (rms < 0.0020) {
       return { freq: null, rms, corr: 0 };
     }
 
     const MIN_FREQ = 40;
-    const MAX_FREQ = 1000;
+    const MAX_FREQ = 1200;
 
     const minLag = Math.floor(sampleRate / MAX_FREQ);
     const maxLag = Math.min(Math.floor(sampleRate / MIN_FREQ), Math.floor(size / 2));
@@ -709,47 +694,55 @@
     analyser.getFloatTimeDomainData(timeData);
 
     const ac = autoCorrelate(timeData, audioCtx.sampleRate);
-    let rawFreq = ac.freq;
-    let rms = ac.rms || 0;
-    let db = rms > 0 ? 20 * Math.log10(rms) : -120;
-
-    let displayFreq = null;
-    let displayNote = '--';
-    let displayCents = 0;
-    let instConf = 0;
+    const rawFreq = ac.freq;
+    const rms = ac.rms || 0;
+    const db  = rms > 0 ? 20 * Math.log10(rms) : -120;
 
     const tuning = TUNINGS[currentTuningId] || TUNINGS.chromatic;
 
+    let chromFreq   = null;
+    let chromNote   = '--';
+    let chromCents  = 0;
+
     if (rawFreq && rawFreq > 20 && rawFreq < 5000) {
-      if (tuning.strings) {
-        // ギター用: 弦スナップ
-        const snapped = snapToTuning(rawFreq, tuning);
-        if (snapped) {
-          displayFreq  = snapped.fundFreq;
-          displayNote  = snapped.name;
-          displayCents = snapped.cents;
-        } else {
-          // うまくスナップできなければクロマチック fallback
-          const info = freqToNoteInfo(rawFreq);
-          if (info) {
-            displayFreq  = rawFreq;
-            displayNote  = `${info.note}${info.oct}`;
-            displayCents = info.cents;
-          }
-        }
-      } else {
-        // クロマチック
-        const info = freqToNoteInfo(rawFreq);
-        if (info) {
-          displayFreq  = rawFreq;
-          displayNote  = `${info.note}${info.oct}`;
-          displayCents = info.cents;
-        }
+      const info = freqToNoteInfo(rawFreq);
+      if (info) {
+        chromFreq  = rawFreq;
+        chromNote  = `${info.note}${info.oct}`;
+        chromCents = info.cents;
       }
     }
 
-    if (displayFreq) {
-      const centsNorm = Math.min(50, Math.abs(displayCents));
+    let finalFreq   = chromFreq;
+    let finalNote   = chromNote;
+    let finalCents  = chromCents;
+
+    if (rawFreq && tuning.strings) {
+      const snapped = snapToTuning(rawFreq, tuning);
+      if (snapped) {
+        finalFreq   = snapped.fundFreq;
+        finalNote   = snapped.name;
+        finalCents  = snapped.cents;
+      }
+    }
+
+    if (finalFreq && finalNote !== '--') {
+      lastGood = {
+        freq: finalFreq,
+        note: finalNote,
+        cents: finalCents,
+        time: performance.now()
+      };
+    } else if (!finalFreq && lastGood && (performance.now() - lastGood.time) < 300) {
+      // 音が途切れても 300ms は最後の値を保持
+      finalFreq  = lastGood.freq;
+      finalNote  = lastGood.note;
+      finalCents = lastGood.cents;
+    }
+
+    let instConf = 0;
+    if (finalFreq) {
+      const centsNorm = Math.min(50, Math.abs(finalCents));
       const centsScore = 1 - (centsNorm / 50);
       const dbClamp = Math.max(-80, Math.min(-10, db));
       const dbNorm = (dbClamp + 80) / 70;
@@ -761,12 +754,8 @@
     if (!isFinite(confEMA)) confEMA = 0;
     window.dpConfEMA = confEMA;
 
-    if (displayFreq) {
-      window.setTunerState(displayFreq, displayNote, displayCents);
-      lastFreq = displayFreq;
-    } else if (lastFreq) {
-      // 音が途切れたら、直前の値をちょっとだけ残す（HUD用）
-      window.setTunerState(lastFreq, displayNote, displayCents);
+    if (finalFreq) {
+      window.setTunerState(finalFreq, finalNote, finalCents);
     }
 
     let text = '';
@@ -777,9 +766,9 @@ dBFS:  ${db.toFixed(1)}
 Conf:  ${confEMA.toFixed(2)}\n`;
     }
     text +=
-`Freq:  ${displayFreq ? displayFreq.toFixed(2) + " Hz" : "--"}
-Note:  ${displayNote}
-Cents: ${displayFreq ? displayCents.toFixed(2) + " cents" : "--"}`;
+`Freq:  ${finalFreq ? finalFreq.toFixed(2) + " Hz" : "--"}
+Note:  ${finalNote}
+Cents: ${finalFreq ? finalCents.toFixed(2) + " cents" : "--"}`;
 
     if (metricsEl) {
       metricsEl.textContent = text;
@@ -841,8 +830,8 @@ Cents: ${displayFreq ? displayCents.toFixed(2) + " cents" : "--"}`;
 
       sourceNode = audioCtx.createMediaStreamSource(stream);
 
-      gainNode = audioCtx.createGain();
-      gainNode.gain.value = isMobile ? 3.0 : 2.5; // フェンダー寄りの感度
+      gainNode = new GainNode(audioCtx);
+      gainNode.gain.value = isMobile ? 3.0 : 2.5;
 
       analyser = audioCtx.createAnalyser();
       analyser.fftSize = isMobile ? 2048 : 4096;
