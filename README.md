@@ -4,9 +4,9 @@ A simple **browser-based chromatic tuner** that works on both mobile and desktop
 Uses your device microphone to detect pitch and display:
 
 - Note (A4, C#3, etc.)
-- Frequency in Hz
-- Cent deviation (how sharp or flat)
-- A clean circular visual meter for tuning
+- Frequency (Hz)
+- Cent deviation (sharp/flat amount)
+- Circular visual tuning meter
 
 No installation required — just open in your browser and start tuning.
 
@@ -17,9 +17,9 @@ No installation required — just open in your browser and start tuning.
 - Works on **iPhone / Android / PC**
 - Real-time pitch display
 - Chromatic tuning (all notes)
-- Responsive circular meter
 - Lightweight single-file implementation (`index.html`)
 - Microphone-based input (HTTPS required)
+- Clear and responsive tuning meter
 
 ---
 
@@ -42,25 +42,23 @@ free-online-guitar-tuner/
 
 ---
 
-## ⚖️ License / Notice
-
-© 2025 DIMProductions.
-
-This repository contains a simple, browser-based tuning tool.  
-You may use or modify it for personal or educational purposes.  
-Commercial redistribution requires permission.
-
-```
-
----
-
 ## 🔧 Requirements
 
 - Chrome, Safari, Firefox, Edge  
-- HTTPS access (microphone APIs require secure context)
+- HTTPS access (microphone APIs require secure context)  
 - A device with an active microphone  
 
+---
 
-## 📬 Contact  
+## 📬 Contact
+
 For collaboration or licensing inquiries:  
 **info@dim.productions**
+
+---
+
+© 2025 DIMProductions.
+You may use or modify this for personal or educational purposes.  
+Commercial redistribution requires permission.
+```
+
