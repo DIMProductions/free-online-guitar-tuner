@@ -60,7 +60,6 @@ Commercial redistribution requires permission.
 - HTTPS access (microphone APIs require secure context)
 - A device with an active microphone  
 
----
 
 ## 📬 Contact  
 For collaboration or licensing inquiries:  
