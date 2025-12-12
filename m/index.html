@@ -546,7 +546,7 @@
     rms = Math.sqrt(rms / size);
 
     // ★ モバイル向け：小さい音でも拾う
-    if (rms < 0.003) {
+    if (rms < 0.0025) {
       return { freq: null, rms };
     }
 
@@ -584,8 +584,7 @@
       if (foundZeroCross) {
         if (correlations[lag] > correlations[lag - 1] && 
             correlations[lag] > correlations[lag + 1] &&
-            // ★ 感度ちょい上げ：0.8 → 0.7
-            correlations[lag] > 0.7) {
+            correlations[lag] > 0.65) {
           
           const y1 = correlations[lag - 1];
           const y2 = correlations[lag];
@@ -781,7 +780,7 @@ Cents: ${dispCents}`;
 
       gainNode = audioCtx.createGain();
       // ★ スマホ向け：入力大きめにブースト
-      gainNode.gain.value = 4.5;
+      gainNode.gain.value = 5.5;
 
       analyser = audioCtx.createAnalyser();
       analyser.fftSize = 2048;
