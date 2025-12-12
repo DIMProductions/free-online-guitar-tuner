@@ -172,8 +172,9 @@
 <div class="meter-pane">
   <div class="circle-meter-container">
     <canvas class="hud-canvas" id="hudCanvas"></canvas>
+
     <div class="hud-ring">
-      <!-- 必要ならSVG HUDをここに -->
+      <!-- ★★★ ここにサークルHUDのSVGを入れる ★★★ -->
     </div>
   </div>
 </div>
@@ -302,6 +303,13 @@
 
     const freq = getFreq();
     const info = analyze(freq, a4);
+
+    const w = canvas.width / DPR;
+    const h = canvas.height / DPR;
+    const cx = w * 0.5;
+    const cy = h * 0.5;
+    const r  = Math.min(w, h) * 0.46;
+
     const conf = clamp(window.dpConfEMA || 0, 0, 1);
 
     const rawCents = clamp(info.adjCents, -MAX_CENTS, MAX_CENTS);
@@ -315,12 +323,6 @@
     const locked = updateLock(tNow, baseLock, conf);
 
     window.dpLocked = locked;
-
-    const w = canvas.width / DPR;
-    const h = canvas.height / DPR;
-    const cx = w * 0.5;
-    const cy = h * 0.5;
-    const r  = Math.min(w, h) * 0.46;
 
     ctx.clearRect(0,0,w,h);
 
@@ -382,15 +384,15 @@
     ctx.lineTo(Math.cos(BASE_ANG) * markR, Math.sin(BASE_ANG) * markR);
     ctx.stroke();
 
+    const MAX_STROBE_SEG = 72;
     const strobeR0 = r * 0.57;
     const strobeR1 = r * 0.83;
-    const strobeSegs = 72;
     const angNeedle12 = BASE_ANG + ang;
     const focusSigma = locked ? 0.23 : 0.35;
-    const dashAng = (Math.PI * 2) / strobeSegs * 0.7;
+    const dashAng = (Math.PI * 2) / MAX_STROBE_SEG * 0.7;
 
-    for (let i = 0; i < strobeSegs; i++){
-      const phi = -Math.PI + (i + 0.5) * ((Math.PI * 2) / strobeSegs) + BASE_ANG;
+    for (let i = 0; i < MAX_STROBE_SEG; i++){
+      const phi = -Math.PI + (i + 0.5) * ((Math.PI * 2) / MAX_STROBE_SEG) + BASE_ANG;
       const d   = Math.atan2(Math.sin(phi - angNeedle12), Math.cos(phi - angNeedle12));
       const weight = Math.exp(-(d * d) / (2 * focusSigma * focusSigma));
       const a0 = phi - dashAng * 0.7;
@@ -485,7 +487,7 @@
 })();
 </script>
 
-<!-- ===== JS Tuner (autoCorrelate) ===== -->
+<!-- ===== JS Tuner (autoCorrelate + updateLoop) ===== -->
 <script>
 (function(){
   'use strict';
@@ -515,7 +517,9 @@
   const statusEl  = document.getElementById('status');
   const metricsEl = document.getElementById('metrics');
 
-  // ===== シンプル差分 autoCorrelate =====
+  let lastFreq = 0; 
+
+  // ===== ギター用レンジ制限付き autoCorrelate =====
   function autoCorrelate(buf, sampleRate) {
     const size = buf.length;
     let rms = 0;
@@ -525,49 +529,58 @@
     }
     rms = Math.sqrt(rms / size);
 
-    // 感度かなり高め
+    // モバイル向け: かなり小さい音まで拾う
     if (rms < 0.0025) {
       return { freq: null, rms, corr: 0 };
     }
+
+    const MIN_FREQ = 40;   // ギター/ベース用 下限
+    const MAX_FREQ = 500;  // 上限 (高すぎる倍音は無視)
+
+    const minLag = Math.floor(sampleRate / MAX_FREQ);
+    const maxLag = Math.min(Math.floor(sampleRate / MIN_FREQ), Math.floor(size / 2));
 
     let bestOffset = -1;
     let bestCorrelation = 0;
     let foundGood = false;
     let lastCorrelation = 1;
 
-    const MIN_SAMPLES = Math.floor(sampleRate / 1000); // 上限 1kHz
-    const MAX_SAMPLES = Math.min(Math.floor(sampleRate / 50), Math.floor(size / 2)); // 下限 50Hz くらい
-
-    for (let offset = MIN_SAMPLES; offset <= MAX_SAMPLES; offset++) {
+    for (let lag = minLag; lag <= maxLag; lag++) {
       let correlation = 0;
-      const count = size - offset;
-      for (let i = 0; i < count; i++) {
-        const diff = buf[i] - buf[i + offset];
+      const corrLen = size - lag;
+      for (let i = 0; i < corrLen; i++) {
+        const diff = buf[i] - buf[i + lag];
         correlation += Math.abs(diff);
       }
-      correlation = 1 - (correlation / count); // 0〜1
+      correlation = 1 - (correlation / corrLen); // 0〜1 に正規化
 
       if (correlation > 0.75 && correlation > lastCorrelation) {
         foundGood = true;
       } else if (foundGood && correlation < lastCorrelation) {
-        // 山を越えたので抜ける
+        // 山を越えたところで抜ける
         break;
       }
 
       if (correlation > bestCorrelation) {
         bestCorrelation = correlation;
-        bestOffset = offset;
+        bestOffset = lag;
       }
 
       lastCorrelation = correlation;
     }
 
-    if (bestCorrelation > 0.1 && bestOffset > 0) {
-      const freq = sampleRate / bestOffset;
-      return { freq, rms, corr: bestCorrelation };
+    if (bestOffset <= 0 || bestCorrelation < 0.1) {
+      return { freq: null, rms, corr: 0 };
     }
 
-    return { freq: null, rms, corr: 0 };
+    const freq = sampleRate / bestOffset;
+
+    // 想定レンジ外 (40〜500Hz) は捨てる → B5(1000Hz) みたいな誤検出を殺す
+    if (freq < MIN_FREQ || freq > MAX_FREQ) {
+      return { freq: null, rms, corr: 0 };
+    }
+
+    return { freq, rms, corr: bestCorrelation };
   }
 
   function updateLoop() {
@@ -579,12 +592,12 @@
 
     const ac = autoCorrelate(timeData, audioCtx.sampleRate);
     let freq = ac.freq;
-    const rms = ac.rms || 0;
-    const db = rms > 0 ? 20 * Math.log10(rms) : -120;
-    const corr = ac.corr || 0;
+    let rms = ac.rms || 0;
+    let db = rms > 0 ? 20 * Math.log10(rms) : -120;
 
     let noteText = "--";
     let cents = 0;
+    let instConf = 0;
 
     if (freq && freq > 20 && freq < 5000) {
       const info = freqToNoteInfo(freq);
@@ -592,12 +605,17 @@
         noteText = `${info.note}${info.oct}`;
         cents = info.cents;
       }
+
+      const centsNorm = Math.min(50, Math.abs(cents));
+      const centsScore = 1 - (centsNorm / 50);
+      const dbClamp = Math.max(-80, Math.min(-10, db));
+      const dbNorm = (dbClamp + 80) / 70;
+      instConf = Math.max(0, Math.min(1, (centsScore * 0.7 + dbNorm * 0.3)));
     } else {
       freq = null;
     }
 
-    const alpha = 0.18;
-    const instConf = Math.max(0, Math.min(1, corr)); // 相関そのまま
+    const alpha = 0.15;
     confEMA = (1 - alpha) * confEMA + alpha * instConf;
     if (!isFinite(confEMA)) confEMA = 0;
 
@@ -605,7 +623,13 @@
       if (typeof window.setTunerFrequency === 'function') {
         window.setTunerFrequency(freq);
       }
+      lastFreq = freq;
+    } else if (lastFreq) {
+      if (typeof window.setTunerFrequency === 'function') {
+        window.setTunerFrequency(lastFreq);
+      }
     }
+
     window.dpConfEMA = confEMA;
 
     let text = '';
@@ -613,7 +637,6 @@
       text +=
 `RMS:   ${rms.toFixed(5)}
 dBFS:  ${db.toFixed(1)}
-Corr:  ${corr.toFixed(2)}
 Conf:  ${confEMA.toFixed(2)}\n`;
     }
     text +=
@@ -624,6 +647,105 @@ Cents: ${freq ? cents.toFixed(2) + " cents" : "--"}`;
     if (metricsEl) {
       metricsEl.textContent = text;
     }
+
+    const wasLocked = window.dpLocked || false;
+
+    const nowTime = performance.now();
+    const TIME_LOCK_MS = 80;
+    const TIME_UNLOCK_MS = 300;
+
+    const GRACE_PERIOD_MS = TIME_UNLOCK_MS;
+
+    if (!window._lockTimeState) {
+      window._lockTimeState = {
+        locked: false,
+        lockStart: 0,
+        unlockStart: 0,
+        lastUpdate: nowTime
+      };
+    }
+
+    const lockState = window._lockTimeState;
+
+    if (confEMA > 0.35) {
+      if (!lockState.locked) {
+        if (!lockState.lockStart) {
+          lockState.lockStart = nowTime;
+        } else if (nowTime - lockState.lockStart >= TIME_LOCK_MS) {
+          lockState.locked = true;
+          lockState.unlockStart = 0;
+        }
+      }
+    } else {
+      if (lockState.locked) {
+        if (!lockState.unlockStart) {
+          lockState.unlockStart = nowTime;
+        } else if (nowTime - lockState.unlockStart >= TIME_UNLOCK_MS) {
+          lockState.locked = false;
+          lockState.lockStart = 0;
+        }
+      } else {
+        lockState.lockStart = 0;
+      }
+    }
+
+    const lockedNow = lockState.locked;
+    window.dpLocked = lockedNow;
+
+    if (!window._lastLockInfo) {
+      window._lastLockInfo = {
+        freq: null,
+        note: null,
+        cents: 0,
+        time: 0
+      };
+    }
+
+    const lastLockInfo = window._lastLockInfo;
+
+    let lastLockFreq = lastLockInfo.freq;
+    let lastLockNote = lastLockInfo.note;
+    let lastLockCents = lastLockInfo.cents;
+
+    if (!window._lockReleaseTime) {
+      window._lockReleaseTime = 0;
+    }
+    let lockReleaseTime = window._lockReleaseTime;
+
+    const justLocked = lockedNow && !wasLocked;
+    const justUnlocked = !lockedNow && wasLocked;
+
+    if (justUnlocked) {
+      lockReleaseTime = nowTime;
+    }
+
+    const inGracePeriod = (nowTime - lockReleaseTime) < GRACE_PERIOD_MS;
+
+    if (freq && noteText !== "--" && confEMA > 0.3) {
+      lastLockFreq  = freq;
+      lastLockNote  = noteText;
+      lastLockCents = cents;
+
+      lastLockInfo.freq  = lastLockFreq;
+      lastLockInfo.note  = lastLockNote;
+      lastLockInfo.cents = lastLockCents;
+      lastLockInfo.time  = nowTime;
+    }
+
+    if (!freq && inGracePeriod && lastLockFreq) {
+      if (typeof window.setTunerFrequency === 'function') {
+        window.setTunerFrequency(lastLockFreq);
+      }
+      const f = lastLockFreq;
+      const info = freqToNoteInfo(f);
+      if (info) {
+        noteText = `${info.note}${info.oct}`;
+      }
+    }
+
+    window._lockReleaseTime = lockReleaseTime;
+    window._lastLockInfo    = lastLockInfo;
+    window.dpLocked         = lockedNow;
 
     requestAnimationFrame(updateLoop);
   }
@@ -680,7 +802,6 @@ Cents: ${freq ? cents.toFixed(2) + " cents" : "--"}`;
       sourceNode = audioCtx.createMediaStreamSource(stream);
 
       gainNode = audioCtx.createGain();
-      // モバイル用ブースト
       gainNode.gain.value = 4.5;
 
       analyser = audioCtx.createAnalyser();
