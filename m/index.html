@@ -1,0 +1,879 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Free Online Guitar & Instrument Tuner</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="Free online tuner that runs in your browser. Supports guitar, bass, and other instruments using your device microphone. Real-time circular HUD with note, frequency (Hz), and cent deviation.">
+
+  <style>
+  * {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+  }
+
+  body {
+    height: 100vh;
+    background: radial-gradient(ellipse at 30% 30%, #000 0%, #000 50%, #000 100%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    color: #e8f7ff;
+  }
+
+  .meter-pane,
+  .circle-meter-container {
+    position: relative;
+    width: min(70vmin, 520px);
+    aspect-ratio: 1;
+  }
+
+  .hud-canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    display: block;
+    filter: drop-shadow(0 0 18px rgba(43,108,255,.45));
+    z-index: 1;
+  }
+
+  .hud-ring {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    pointer-events: none;
+    filter: drop-shadow(0 0 10px rgba(0,255,255,.12));
+    z-index: 0;
+  }
+
+  .hud-ring > svg {
+    width: 100%;
+    height: 100%;
+    display: block;
+    transform-origin: 50% 50%;
+    transform: scale(0.98);
+  }
+
+  .control-strip {
+    width: 100%;
+    max-width: 520px;
+    margin-top: 20px;
+    padding: 10px 12px 16px;
+    border-radius: 999px;
+    background:
+      radial-gradient(circle at 0 0, rgba(0,180,255,0.12) 0, transparent 45%),
+      radial-gradient(circle at 100% 100%, rgba(255,100,180,0.08) 0, transparent 50%),
+      linear-gradient(135deg, #020712 0%, #050b16 50%, #020509 100%);
+    border: 1px solid rgba(0,255,255,0.2);
+    box-shadow:
+      0 0 0 1px rgba(0,0,0,0.9),
+      0 16px 40px rgba(0,0,0,0.85);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+  }
+
+  #startBtn {
+    padding: 8px 18px;
+    border-radius: 999px;
+    border: 1px solid rgba(0,255,255,0.7);
+    background:
+      radial-gradient(circle at 30% 0%, #0b2f4a 0, #021017 42%, #000 100%);
+    color: #e8f7ff;
+    font-size: 13px;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    text-shadow: 0 0 6px rgba(0,255,255,0.7);
+    box-shadow:
+      0 0 12px rgba(0,255,255,0.6),
+      0 0 36px rgba(0,140,255,0.35);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  #startBtn:hover:not(:disabled) {
+    box-shadow:
+      0 0 16px rgba(0,255,255,0.85),
+      0 0 42px rgba(0,140,255,0.5);
+    transform: translateY(-0.5px);
+  }
+
+  #startBtn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+  }
+
+  #status {
+    font-size: 14px;
+    color: #79bcd1;
+    text-align: center;
+  }
+
+  #metrics {
+    margin-top: 12px;
+    font-size: 11px;
+    color: #5a8a9a;
+    text-align: center;
+    font-family: ui-monospace, monospace;
+    white-space: pre;
+  }
+
+  /* ==== スマホ用レイアウト調整 ==== */
+  @media (max-width: 600px) {
+    body {
+      height: 100vh;
+      padding: 12px 8px;
+      justify-content: flex-start;
+      gap: 16px;
+    }
+
+    .meter-pane,
+    .circle-meter-container {
+      width: 100%;
+      max-width: 420px;
+    }
+
+    .control-strip {
+      max-width: 420px;
+      margin-top: 14px;
+      padding: 8px 12px 12px;
+      border-radius: 24px;
+      gap: 4px;
+    }
+
+    #startBtn {
+      width: 100%;
+      justify-content: center;
+      font-size: 12px;
+      padding: 10px 12px;
+    }
+
+    #status {
+      font-size: 12px;
+    }
+
+    #metrics {
+      font-size: 10px;
+    }
+  }
+  </style>
+</head>
+<body>
+
+<div class="meter-pane">
+  <div class="circle-meter-container">
+    <canvas class="hud-canvas" id="hudCanvas"></canvas>
+
+    <div class="hud-ring">
+      <!-- ★★★ ここにサークルHUDのSVGを入れる ★★★ -->
+    </div>
+  </div>
+</div>
+
+<div class="control-strip">
+  <button id="startBtn">TAP TO START TUNER</button>
+  <div id="status">Idle</div>
+  <div id="metrics"></div>
+</div>
+
+<!-- ===== Circle HUD 描画 ===== -->
+<script>
+(function(){
+  'use strict';
+
+  const NOTE = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+  const a4 = 440.0;
+  const MAX_CENTS = 50;
+  const MAX_ANG   = 60 * Math.PI / 180;
+  const BASE_ANG  = -Math.PI / 2;
+
+  const canvas = document.getElementById('hudCanvas');
+  if (!canvas) return;
+
+  const DPR = Math.min(1.75, window.devicePixelRatio || 1);
+  const ctx = canvas.getContext('2d');
+
+  function fit(){
+    const r = canvas.getBoundingClientRect();
+    canvas.width  = r.width  * DPR;
+    canvas.height = r.height * DPR;
+    ctx.setTransform(DPR,0,0,DPR,0,0);
+  }
+  fit();
+  window.addEventListener('resize', fit);
+
+  function clamp(v, lo, hi){ return Math.max(lo, Math.min(hi, v)); }
+  function lowpass(prev, next, dt, hz){
+    const a = 1 - Math.exp(-dt * hz * 2 * Math.PI);
+    return prev + (next - prev) * clamp(a, 0, 1);
+  }
+  function isInRange(c){ return Math.abs(c) <= 5; }
+  function RGBA(c, a){ return `rgba(${c.r},${c.g},${c.b},${a})`; }
+
+  function analyze(f, a4ref){
+    const midi = Math.round(69 + 12 * Math.log2(f / a4ref));
+    const note = NOTE[(midi % 12 + 12) % 12];
+    const oct  = Math.floor(midi / 12) -1;
+    const target = a4ref * Math.pow(2, (midi - 69) / 12);
+    const cents  = 1200 * Math.log2(f / target);
+    return { note, oct, target, cents, adjCents: cents };
+  }
+
+  function needleAngleFromCents(c){
+    return clamp((c / MAX_CENTS) * MAX_ANG, -MAX_ANG, MAX_ANG);
+  }
+
+  // HUD が読むグローバル
+  window.tunerFreq = 440;
+  window.setTunerFrequency = function(f){
+    if (!Number.isFinite(f) || f <= 0) return;
+    window.tunerFreq = f;
+  };
+  window.dpConfEMA = 0;
+  window.dpLocked = false; // ロック状態を外にも共有
+
+  function getFreq() { return window.tunerFreq || 440; }
+
+  let tPrev = performance.now();
+  let centsSm = 0;
+
+  const centsSamples = [];
+  const MAX_SAMPLES = 9;
+
+  function pushCentsSample(c, conf){
+    if (conf < 0.3) {
+      centsSamples.length = 0;
+      return;
+    }
+    centsSamples.push(c);
+    if (centsSamples.length > MAX_SAMPLES) {
+      centsSamples.shift();
+    }
+  }
+
+  function getSmoothedCents(){
+    if (centsSamples.length === 0) return 0;
+    let sum = 0;
+    for (let i = 0; i < centsSamples.length; i++){
+      sum += centsSamples[i];
+    }
+    return sum / centsSamples.length;
+  }
+
+  let lockState = "idle";
+  let lockEnterTime = 0;
+  let lockLastGoodTime = 0;
+
+  function updateLock(nowMs, baseLock, conf){
+    // ★ HyperSense: conf 緩和
+    const ok = baseLock && conf >= 0.25;
+    if (ok) lockLastGoodTime = nowMs;
+
+    if (lockState === "idle") {
+      if (ok) {
+        lockState = "locking";
+        lockEnterTime = nowMs;
+      }
+    } else if (lockState === "locking") {
+      if (!ok) {
+        lockState = "idle";
+      // ★ HyperSense: ロックまでを速く
+      } else if (nowMs - lockEnterTime > 50) {
+        lockState = "locked";
+      }
+    } else if (lockState === "locked") {
+      // ★ HyperSense: ロック解除までを粘らせる
+      if (nowMs - lockLastGoodTime > 500) {
+        lockState = "idle";
+      }
+    }
+    return lockState === "locked";
+  }
+
+  function draw(){
+    const tNow = performance.now();
+    const dt   = (tNow - tPrev) / 1000;
+    tPrev = tNow;
+
+    const freq = getFreq();
+    const info = analyze(freq, a4);
+    const conf = clamp(window.dpConfEMA || 0, 0, 1);
+
+    const rawCents = clamp(info.adjCents, -MAX_CENTS, MAX_CENTS);
+    pushCentsSample(rawCents, conf);
+    const smoothCents = getSmoothedCents();
+
+    centsSm = lowpass(centsSm, smoothCents, dt, 4);
+
+    const ang = needleAngleFromCents(centsSm);
+    // ★ HyperSense: ロック判定を緩める（±8セント）
+    const baseLock = Math.abs(centsSm) <= 8;
+    const locked = updateLock(tNow, baseLock, conf);
+
+    // ロック状態を共有
+    window.dpLocked = locked;
+
+    const w = canvas.width / DPR;
+    const h = canvas.height / DPR;
+    const cx = w * 0.5;
+    const cy = h * 0.5;
+    const r  = Math.min(w, h) * 0.46;
+
+    ctx.clearRect(0,0,w,h);
+
+    ctx.save();
+    ctx.translate(cx, cy);
+
+    const grad = ctx.createRadialGradient(0,0,r*0.2, 0,0,r*0.95);
+    grad.addColorStop(0.0, 'rgba(0, 10, 18, 1)');
+    grad.addColorStop(0.4, 'rgba(2, 36, 64, 1)');
+    grad.addColorStop(0.7, 'rgba(0, 0, 0, 1)');
+    grad.addColorStop(1.0, 'rgba(0, 0, 0, 1)');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(0,0,r*1.02,0,Math.PI*2);
+    ctx.fill();
+
+    const outerR = r * 0.98;
+    ctx.strokeStyle = 'rgba(0,180,255,0.35)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(0,0,outerR,0,Math.PI*2);
+    ctx.stroke();
+
+    const inRange = isInRange(centsSm);
+
+    const ringBaseR = r * 0.75;
+    ctx.strokeStyle = inRange ? 'rgba(0,220,255,0.7)' : 'rgba(255,80,80,0.6)';
+    ctx.lineWidth = locked ? 3.4 : 2.4;
+    ctx.shadowColor = inRange ? 'rgba(0,220,255,0.5)' : 'rgba(255,0,0,0.6)';
+    ctx.shadowBlur  = locked ? 20 : 10;
+    ctx.beginPath();
+    ctx.arc(0,0,ringBaseR,0,Math.PI*2);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+
+    const tickR1 = r*0.80;
+    const tickR2 = r*0.92;
+    for (let deg = -60; deg <= 60; deg += 5){
+      const tickAng = BASE_ANG + (deg * Math.PI / 180);
+      const strength = 1 - Math.min(1, Math.abs(deg) / 65);
+      const alpha = 0.12 + 0.5 * strength;
+      const isMajor = (deg % 10 === 0);
+
+      ctx.strokeStyle = `rgba(${inRange ? '0,200,255' : '255,90,90'},${alpha})`;
+      ctx.lineWidth = isMajor ? 2.0 : 1.0;
+      ctx.beginPath();
+      ctx.moveTo(Math.cos(tickAng) * tickR1, Math.sin(tickAng) * tickR1);
+      ctx.lineTo(Math.cos(tickAng) * tickR2, Math.sin(tickAng) * tickR2);
+      ctx.stroke();
+    }
+
+    const markR = r * 0.98;
+    ctx.strokeStyle = inRange 
+      ? 'rgba(0,255,255,0.9)' 
+      : 'rgba(255,80,80,0.9)';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(Math.cos(BASE_ANG) * markR * 0.94, Math.sin(BASE_ANG) * markR * 0.94);
+    ctx.lineTo(Math.cos(BASE_ANG) * markR, Math.sin(BASE_ANG) * markR);
+    ctx.stroke();
+
+    // ストロボ描画（針の下）
+    const strobeR0 = r * 0.57;
+    const strobeR1 = r * 0.83;
+    const strobeSegs = 72;
+    const angNeedle12 = BASE_ANG + ang;
+    const focusSigma = locked ? 0.23 : 0.35;
+    const dashAng = (Math.PI * 2) / strobeSegs * 0.7;
+
+    for (let i = 0; i < strobeSegs; i++){
+      const phi = -Math.PI + (i + 0.5) * ((Math.PI * 2) / strobeSegs) + BASE_ANG;
+      const d   = Math.atan2(Math.sin(phi - angNeedle12), Math.cos(phi - angNeedle12));
+      const weight = Math.exp(-(d * d) / (2 * focusSigma * focusSigma));
+      const a0 = phi - dashAng * 0.7;
+      const a1 = phi + dashAng * 0.5;
+
+      const baseAlpha = locked ? 0.18 : 0.10;
+      const addAlpha  = locked ? 0.85 : 0.80;
+
+      ctx.strokeStyle = inRange
+        ? RGBA({r:0, g:136, b:255}, baseAlpha + addAlpha * weight)
+        : RGBA({r:255, g:0, b:0}, 0.12 + 0.78 * weight);
+      ctx.lineWidth = r * 0.055 * (0.6 + 0.4 * weight);
+
+      ctx.beginPath();
+      ctx.arc(0, 0, strobeR0, a0, a1);
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.arc(0, 0, strobeR1, a0, a1);
+      ctx.stroke();
+    }
+
+    // 針描画（ストロボの上）
+    const needleLen  = r * 0.78;
+    const needleBack = r * 0.18;
+    const needleAng  = BASE_ANG + ang;
+
+    const baseCol = inRange ? {r:0,g:220,b:255} : {r:255,g:110,b:110};
+
+    const tipX  = Math.cos(needleAng) * needleLen;
+    const tipY  = Math.sin(needleAng) * needleLen;
+    const tailX = Math.cos(needleAng + Math.PI) * needleBack;
+    const tailY = Math.sin(needleAng + Math.PI) * needleBack;
+
+    ctx.shadowColor = RGBA(baseCol, locked ? 0.55 : 0.3);
+    ctx.shadowBlur  = locked ? 22 : 14;
+    ctx.lineCap = 'round';
+
+    ctx.lineWidth = 4.5;
+    ctx.strokeStyle = RGBA({r:0,g:0,b:0}, 0.9);
+    ctx.beginPath();
+    ctx.moveTo(tailX * 0.96, tailY * 0.96);
+    ctx.lineTo(tipX * 1.01, tipY * 1.01);
+    ctx.stroke();
+
+    const gradNeedle = ctx.createLinearGradient(tailX, tailY, tipX, tipY);
+    const headCol = inRange ? 'rgba(0,255,255,1)' : 'rgba(255,160,160,1)';
+    gradNeedle.addColorStop(0.0, 'rgba(0,0,0,0.0)');
+    gradNeedle.addColorStop(0.25,'rgba(0,180,255,0.65)');
+    gradNeedle.addColorStop(0.7, headCol);
+    gradNeedle.addColorStop(1.0,'rgba(255,255,255,0.9)');
+
+    ctx.lineWidth = 3.0;
+    ctx.strokeStyle = gradNeedle;
+    ctx.beginPath();
+    ctx.moveTo(tailX, tailY);
+    ctx.lineTo(tipX, tipY);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+
+    ctx.fillStyle = 'rgba(0,0,0,0.9)';
+    ctx.beginPath();
+    ctx.arc(0, 0, r * 0.07, 0, Math.PI * 2);
+    ctx.fill();
+
+    const innerGrad = ctx.createRadialGradient(0,0,0,0,0,r*0.32);
+    innerGrad.addColorStop(0.0, 'rgba(0,0,0,1)');
+    innerGrad.addColorStop(0.5, 'rgba(0,40,80,1)');
+    innerGrad.addColorStop(1.0, 'rgba(0,0,0,1)');
+    ctx.fillStyle = innerGrad;
+    ctx.beginPath();
+    ctx.arc(0, 0, r * 0.38, 0, Math.PI * 2);
+    ctx.fill();
+
+    // ノートを大きく、Hzを少し小さく
+    ctx.fillStyle = '#e8f7ff';
+    ctx.font = `${r*0.22}px "SF Mono", ui-monospace, Menlo, Consolas, monospace`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(`${info.note}${info.oct}`, 0, r * 0.10);
+
+    ctx.fillStyle = 'rgba(120,200,255,0.9)';
+    ctx.font = `${r*0.11}px "SF Mono", ui-monospace`;
+    ctx.fillText(`${freq.toFixed(2)} Hz`, 0, -r * 0.10);
+
+    ctx.restore();
+
+    requestAnimationFrame(draw);
+  }
+
+  requestAnimationFrame(draw);
+})();
+</script>
+
+<!-- ===== JS Tuner (autoCorrelate) ===== -->
+<script>
+(function(){
+  'use strict';
+
+  const NOTE_NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+  const A4_REF = 440.0;
+
+  // 公開版ではデバッグ非表示
+  const SHOW_DEBUG = false;
+
+  function freqToNoteInfo(freq) {
+    if (!freq || !Number.isFinite(freq) || freq <= 0) return null;
+    const midi = Math.round(69 + 12 * Math.log2(freq / A4_REF));
+    const noteName = NOTE_NAMES[(midi % 12 + 12) % 12];
+    const octave = Math.floor(midi / 12) -1;
+    const target = A4_REF * Math.pow(2, (midi - 69) / 12);
+    const cents = 1200 * Math.log2(freq / target);
+    return { note: noteName, oct: octave, cents };
+  }
+
+  let audioCtx    = null;
+  let sourceNode  = null;
+  let gainNode    = null;
+  let analyser    = null;
+  let running     = false;
+  let confEMA     = 0;
+
+  let testOsc     = null;
+  let testGain    = null;
+
+  // ロック中に表示をホールドする用
+  let lastLockFreq  = null;
+  let lastLockNote  = "--";
+  let lastLockCents = 0;
+  let wasLocked = false;
+  let lockReleaseTime = 0;
+  const GRACE_PERIOD_MS = 500;
+
+  const startBtn  = document.getElementById('startBtn');
+  const statusEl  = document.getElementById('status');
+  const metricsEl = document.getElementById('metrics');
+
+  let lastFreq = 0; 
+
+  function autoCorrelate(buf, sampleRate) {
+    const size = buf.length;
+    let rms = 0;
+    for (let i = 0; i < size; i++) {
+      const v = buf[i];
+      rms += v * v;
+    }
+    rms = Math.sqrt(rms / size);
+
+    // ★ HyperSense RMS 判定
+    if (rms < 0.0015) {
+      return { freq: null, rms };
+    }
+
+    // 楽器の弱音は保持して補間
+    if (rms < 0.002) {
+      return { freq: lastFreq || null, rms };
+    }
+
+    const minLag = Math.floor(sampleRate / 2000);
+    const maxLag = Math.floor(sampleRate / 60);
+    
+    const correlations = new Float32Array(maxLag + 1);
+    let maxCorr = 0;
+
+    for (let lag = minLag; lag <= maxLag; lag++) {
+      let corr = 0;
+      const corrLen = size - lag;
+      for (let i = 0; i < corrLen; i++) {
+        corr += buf[i] * buf[i + lag];
+      }
+      correlations[lag] = corr / corrLen;
+      if (correlations[lag] > maxCorr) maxCorr = correlations[lag];
+    }
+
+    if (maxCorr > 0) {
+      for (let lag = minLag; lag <= maxLag; lag++) {
+        correlations[lag] /= maxCorr;
+      }
+    }
+
+    let foundZeroCross = false;
+    let bestOffset = -1;
+    let bestCorr = 0;
+
+    for (let lag = minLag + 1; lag < maxLag - 1; lag++) {
+      if (!foundZeroCross && correlations[lag - 1] < 0 && correlations[lag] >= 0) {
+        foundZeroCross = true;
+      }
+      
+      if (foundZeroCross) {
+        if (correlations[lag] > correlations[lag - 1] && 
+            correlations[lag] > correlations[lag + 1] &&
+            // ★ 超高感度：スマホは0.55〜0.65で十分
+            correlations[lag] > 0.55) {
+          
+          const y1 = correlations[lag - 1];
+          const y2 = correlations[lag];
+          const y3 = correlations[lag + 1];
+          const denom = y1 - 2 * y2 + y3;
+          if (Math.abs(denom) > 1e-6) {
+            const offset = (y1 - y3) / (2 * denom);
+            bestOffset = lag + offset;
+          } else {
+            bestOffset = lag;
+          }
+          bestCorr = correlations[lag];
+          break;
+        }
+      }
+    }
+
+    if (bestOffset === -1) {
+      return { freq: null, rms };
+    }
+
+    let freq = sampleRate / bestOffset;
+
+    // ★ HyperSense smoothing (周波数EMA)
+    if (!window.freqEMA) window.freqEMA = freq;
+    window.freqEMA = window.freqEMA * 0.7 + freq * 0.3;
+    freq = window.freqEMA;
+
+    return { freq, rms, corr: bestCorr };
+  }
+
+  function updateLoop() {
+    if (!running || !analyser) return;
+
+    const bufferLen = analyser.fftSize;
+    const timeData = new Float32Array(bufferLen);
+    analyser.getFloatTimeDomainData(timeData);
+
+    const ac = autoCorrelate(timeData, audioCtx.sampleRate);
+    let freq = ac.freq;
+    let rms = ac.rms || 0;
+    let db = rms > 0 ? 20 * Math.log10(rms) : -120;
+
+    let noteText = "--";
+    let cents = 0;
+    let instConf = 0;
+
+    if (freq && freq > 20 && freq < 5000) {
+      const info = freqToNoteInfo(freq);
+      if (info) {
+        noteText = `${info.note}${info.oct}`;
+        cents = info.cents;
+      }
+
+      const centsNorm = Math.min(50, Math.abs(cents));
+      const centsScore = 1 - (centsNorm / 50);
+      const dbClamp = Math.max(-80, Math.min(-10, db));
+      const dbNorm = (dbClamp + 80) / 70;
+      instConf = Math.max(0, Math.min(1, (centsScore * 0.7 + dbNorm * 0.3)));
+    } else {
+      freq = null;
+    }
+
+    if (freq) {
+      lastFreq = freq;
+    }
+
+    const alpha = 0.15;
+    confEMA = (1 - alpha) * confEMA + alpha * instConf;
+    if (!isFinite(confEMA)) confEMA = 0;
+
+    if (freq) {
+      if (typeof window.setTunerFrequency === 'function') {
+        window.setTunerFrequency(freq);
+      }
+    }
+    window.dpConfEMA = confEMA;
+
+    const lockedNow = (window.dpLocked === true);
+    const nowTime = performance.now();
+
+    const justLocked = lockedNow && !wasLocked;
+    const justUnlocked = !lockedNow && wasLocked;
+
+    if (justUnlocked) {
+      lockReleaseTime = nowTime;
+    }
+
+    const inGracePeriod = (nowTime - lockReleaseTime) < GRACE_PERIOD_MS;
+
+    if (freq && noteText !== "--" && confEMA > 0.3) {
+      lastLockFreq  = freq;
+      lastLockNote  = noteText;
+      lastLockCents = cents;
+    }
+
+    if (justLocked && lastLockFreq === null) {
+      const hudFreq = window.tunerFreq;
+      if (hudFreq && hudFreq !== 440) {
+        const hudInfo = freqToNoteInfo(hudFreq);
+        if (hudInfo) {
+          lastLockFreq = hudFreq;
+          lastLockNote = `${hudInfo.note}${hudInfo.oct}`;
+          lastLockCents = hudInfo.cents;
+        }
+      }
+    }
+
+    let dispFreq, dispNote, dispCents;
+
+    if ((lockedNow || inGracePeriod) && lastLockFreq !== null) {
+      dispFreq  = lastLockFreq.toFixed(2) + " Hz";
+      dispNote  = lastLockNote;
+      dispCents = lastLockCents.toFixed(2) + " cents";
+    } else if (freq && noteText !== "--") {
+      dispFreq  = freq.toFixed(2) + " Hz";
+      dispNote  = noteText;
+      dispCents = cents.toFixed(2) + " cents";
+    } else if (!freq && lastLockFreq !== null) {
+      dispFreq  = lastLockFreq.toFixed(2) + " Hz";
+      dispNote  = lastLockNote;
+      dispCents = lastLockCents.toFixed(2) + " cents";
+    } else {
+      dispFreq  = "--";
+      dispNote  = "--";
+      dispCents = "--";
+    }
+
+    wasLocked = lockedNow;
+
+    let text = '';
+    if (SHOW_DEBUG) {
+      text +=
+`RMS:   ${rms.toFixed(5)}
+dBFS:  ${db.toFixed(1)}
+Conf:  ${confEMA.toFixed(2)}\n`;
+    }
+    text +=
+`Freq:  ${dispFreq}
+Note:  ${dispNote}
+Cents: ${dispCents}`;
+
+    if (metricsEl) {
+      metricsEl.textContent = text;
+    }
+
+    requestAnimationFrame(updateLoop);
+  }
+
+  async function initTuner() {
+    if (running) {
+      console.log('[ΔPhase] already running');
+      return;
+    }
+
+    startBtn.disabled = true;
+    statusEl.textContent = 'Initializing…';
+
+    try {
+      statusEl.textContent = 'Requesting mic access… (Phone uses the internal mic)';
+
+      const legacyGetUserMedia =
+        navigator.getUserMedia ||
+        navigator.webkitGetUserMedia ||
+        navigator.mozGetUserMedia ||
+        navigator.msGetUserMedia;
+
+      const getUserMedia = (constraints) => {
+        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+          return navigator.mediaDevices.getUserMedia(constraints);
+        } else if (legacyGetUserMedia) {
+          return new Promise((resolve, reject) => {
+            legacyGetUserMedia.call(navigator, constraints, resolve, reject);
+          });
+        } else {
+          return null;
+        }
+      };
+
+      const gUM = getUserMedia({
+        audio: {
+          channelCount: 1,
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false
+        }
+      });
+
+      if (!gUM) {
+        throw new Error('This browser cannot use the microphone on this device.');
+      }
+
+      const stream = await gUM;
+
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      audioCtx = new AudioContextClass();
+
+      if (audioCtx.state === 'suspended') {
+        await audioCtx.resume();
+      }
+
+      sourceNode = audioCtx.createMediaStreamSource(stream);
+
+      gainNode = audioCtx.createGain();
+      // ★ スマホ最適：内部マイクは音圧が低いので大幅ブースト
+      gainNode.gain.value = 4.5;
+
+      analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 2048;
+
+      sourceNode.connect(gainNode);
+      gainNode.connect(analyser);
+
+      running = true;
+      statusEl.textContent = 'Tuning… (Aim sound at the mic)';
+      console.log('[ΔPhase] audio pipeline ready');
+
+      window.dbgAudioCtx = audioCtx;
+      window.dbgAnalyser = analyser;
+      window.dbgGainNode = gainNode;
+
+      requestAnimationFrame(updateLoop);
+
+    } catch (err) {
+      console.error('[ΔPhase] initTuner error:', err);
+      statusEl.textContent = 'Error: ' + err.message + '\nHTTPS and microphone permission are required.';
+      startBtn.disabled = false;
+    }
+  }
+
+  async function startSine440Test() {
+    console.log('[Test] running:', running);
+    if (running) {
+      console.log('[Test] already running, skip');
+      return;
+    }
+    
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!audioCtx) audioCtx = new AC();
+    console.log('[Test] audioCtx:', audioCtx);
+    
+    if (audioCtx.state === "suspended") await audioCtx.resume();
+
+    analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 4096;
+    analyser.smoothingTimeConstant = 0.0;
+    console.log('[Test] analyser created');
+
+    testOsc = audioCtx.createOscillator();
+    testOsc.type = "sine";
+    testOsc.frequency.value = 440;
+
+    testGain = audioCtx.createGain();
+    testGain.gain.value = 1.0;
+
+    testOsc.connect(testGain);
+    testGain.connect(analyser);
+    console.log('[Test] connected: osc -> gain -> analyser');
+
+    testOsc.start();
+    running = true;
+    statusEl.textContent = '🎵 440Hz Test...';
+    console.log('[Test] started');
+    
+    requestAnimationFrame(updateLoop);
+  }
+
+  window.startSine440Test = startSine440Test;
+
+  startBtn.addEventListener('click', () => {
+    initTuner();
+  });
+
+  const testBtn = document.getElementById('testBtn');
+  if (testBtn) {
+    testBtn.addEventListener('click', () => {
+      startSine440Test();
+    });
+  }
+})();
+</script>
+
+</body>
+</html>
