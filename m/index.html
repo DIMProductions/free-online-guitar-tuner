@@ -37,7 +37,7 @@
     width: 100%;
     height: 100%;
     display: block;
-    filter: drop-shadow(0 0 18px rgba(43,108,255,.45));
+    filter: drop-shadow(0 0 18px rgba(43,108,255,0.45));
     z-index: 1;
   }
 
@@ -47,7 +47,7 @@
     display: grid;
     place-items: center;
     pointer-events: none;
-    filter: drop-shadow(0 0 10px rgba(0,255,255,.12));
+    filter: drop-shadow(0 0 10px rgba(0,255,255,0.12));
     z-index: 0;
   }
 
@@ -175,7 +175,7 @@
     <canvas class="hud-canvas" id="hudCanvas"></canvas>
 
     <div class="hud-ring">
-      <!-- ★★★ ここにサークルHUDのSVGを入れる（今は空のままでOK） ★★★ -->
+      <!-- 必要ならここにSVG HUDを重ねる -->
     </div>
   </div>
 </div>
@@ -233,7 +233,7 @@
     return clamp((c / MAX_CENTS) * MAX_ANG, -MAX_ANG, MAX_ANG);
   }
 
-  // HUD が読むグローバル
+  // HUDが読む値
   window.tunerFreq = 440;
   window.setTunerFrequency = function(f){
     if (!Number.isFinite(f) || f <= 0) return;
@@ -251,7 +251,7 @@
   const MAX_SAMPLES = 9;
 
   function pushCentsSample(c, conf){
-    if (conf < 0.3) {
+    if (conf < 0.2) {
       centsSamples.length = 0;
       return;
     }
@@ -275,7 +275,8 @@
   let lockLastGoodTime = 0;
 
   function updateLock(nowMs, baseLock, conf){
-    const ok = baseLock && conf >= 0.25;
+    // conf かなりゆるめ
+    const ok = baseLock && conf >= 0.15;
     if (ok) lockLastGoodTime = nowMs;
 
     if (lockState === "idle") {
@@ -286,11 +287,11 @@
     } else if (lockState === "locking") {
       if (!ok) {
         lockState = "idle";
-      } else if (nowMs - lockEnterTime > 50) {
+      } else if (nowMs - lockEnterTime > 40) {
         lockState = "locked";
       }
     } else if (lockState === "locked") {
-      if (nowMs - lockLastGoodTime > 500) {
+      if (nowMs - lockLastGoodTime > 400) {
         lockState = "idle";
       }
     }
@@ -517,7 +518,7 @@
   const statusEl  = document.getElementById('status');
   const metricsEl = document.getElementById('metrics');
 
-  // ===== autoCorrelate（差分ベース） =====
+  // ===== 安定版 autoCorrelate =====
   function autoCorrelate(buf, sampleRate) {
     const SIZE = buf.length;
     let rms = 0;
@@ -527,46 +528,49 @@
     }
     rms = Math.sqrt(rms / SIZE);
 
-    // モバイル用：かなり小さい音まで拾う
+    // 感度かなり高め（0.003）…
     if (rms < 0.003) {
       return { freq: null, rms, corr: 0 };
     }
 
-    let bestOffset = -1;
-    let bestCorrelation = 0;
-    let foundGoodCorrelation = false;
-    let lastCorrelation = 1;
-
-    // 周波数レンジ：50〜1000Hzぐらい
-    const MIN_SAMPLES = Math.floor(sampleRate / 1000); // 上限
-    const MAX_SAMPLES = Math.floor(sampleRate / 50);   // 下限
-
-    for (let offset = MIN_SAMPLES; offset <= MAX_SAMPLES; offset++) {
-      let correlation = 0;
-
-      for (let i = 0; i < MAX_SAMPLES; i++) {
-        const diff = buf[i] - buf[i + offset];
-        correlation += Math.abs(diff);
-      }
-      correlation = 1 - (correlation / MAX_SAMPLES); // 0〜1 に正規化
-
-      if (correlation > 0.9 && correlation > lastCorrelation) {
-        foundGoodCorrelation = true;
-      } else if (foundGoodCorrelation && correlation < lastCorrelation) {
-        break;
-      }
-
-      if (correlation > bestCorrelation) {
-        bestCorrelation = correlation;
-        bestOffset = offset;
-      }
-
-      lastCorrelation = correlation;
+    // 端の無音を少し削る（ノイズ軽減）
+    let r1 = 0, r2 = SIZE - 1;
+    const thresh = 0.002;
+    while (r1 < SIZE/2 && Math.abs(buf[r1]) < thresh) r1++;
+    while (r2 > SIZE/2 && Math.abs(buf[r2]) < thresh) r2--;
+    const trimmed = buf.slice(r1, r2);
+    const len = trimmed.length;
+    if (len < 32) {
+      return { freq: null, rms, corr: 0 };
     }
 
-    if (bestCorrelation > 0.01 && bestOffset !== -1) {
+    const MAX_SAMPLES = Math.floor(len / 2);
+    const correlations = new Array(MAX_SAMPLES);
+    let bestOffset = -1;
+    let bestCorr = 0;
+    let foundGood = false;
+
+    for (let offset = 0; offset < MAX_SAMPLES; offset++) {
+      let corr = 0;
+      for (let i = 0; i < MAX_SAMPLES; i++) {
+        corr += trimmed[i] * trimmed[i + offset];
+      }
+      correlations[offset] = corr;
+
+      if (corr > 0.9 * correlations[0]) {
+        foundGood = true;
+      }
+
+      if (foundGood && corr < correlations[offset - 1]) {
+        bestOffset = offset - 1;
+        bestCorr = correlations[offset - 1];
+        break;
+      }
+    }
+
+    if (bestCorr > 0.001 && bestOffset > 0) {
       const freq = sampleRate / bestOffset;
-      return { freq, rms, corr: bestCorrelation };
+      return { freq, rms, corr: bestCorr };
     }
 
     return { freq: null, rms, corr: 0 };
@@ -598,8 +602,8 @@
       freq = null;
     }
 
-    const alpha = 0.15;
-    const instConf = corr;
+    const alpha = 0.18;
+    const instConf = Math.max(0, Math.min(1, corr * 3)); // 適当にスケーリング
     confEMA = (1 - alpha) * confEMA + alpha * instConf;
     if (!isFinite(confEMA)) confEMA = 0;
 
@@ -615,7 +619,7 @@
       text +=
 `RMS:   ${rms.toFixed(5)}
 dBFS:  ${db.toFixed(1)}
-Corr:  ${corr.toFixed(2)}
+Corr:  ${corr.toFixed(4)}
 Conf:  ${confEMA.toFixed(2)}\n`;
     }
     text +=
@@ -631,15 +635,13 @@ Cents: ${freq ? cents.toFixed(2) + " cents" : "--"}`;
   }
 
   async function initTuner() {
-    if (running) {
-      return;
-    }
+    if (running) return;
 
     startBtn.disabled = true;
     statusEl.textContent = 'Initializing…';
 
     try {
-      statusEl.textContent = 'Requesting mic access… (Phone uses the internal mic)';
+      statusEl.textContent = 'Requesting mic access…';
 
       const legacyGetUserMedia =
         navigator.getUserMedia ||
@@ -684,8 +686,8 @@ Cents: ${freq ? cents.toFixed(2) + " cents" : "--"}`;
       sourceNode = audioCtx.createMediaStreamSource(stream);
 
       gainNode = audioCtx.createGain();
-      // モバイル向け：入力ブースト
-      gainNode.gain.value = 4.5;
+      // モバイル向け：少しブースト
+      gainNode.gain.value = 4.0;
 
       analyser = audioCtx.createAnalyser();
       analyser.fftSize = 4096;
