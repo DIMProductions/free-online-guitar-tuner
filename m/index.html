@@ -80,13 +80,13 @@
   }
 
   #startBtn {
-    padding: 8px 18px;
+    padding: 12px 24px;
     border-radius: 999px;
     border: 1px solid rgba(0,255,255,0.7);
     background:
       radial-gradient(circle at 30% 0%, #0b2f4a 0, #021017 42%, #000 100%);
     color: #e8f7ff;
-    font-size: 13px;
+    font-size: 15px;
     letter-spacing: 0.09em;
     text-transform: uppercase;
     text-shadow: 0 0 6px rgba(0,255,255,0.7);
@@ -97,9 +97,12 @@
     display: inline-flex;
     align-items: center;
     gap: 6px;
+    min-height: 44px; /* iOS推奨タッチサイズ */
+    touch-action: manipulation; /* ダブルタップズーム防止 */
   }
 
-  #startBtn:hover:not(:disabled) {
+  #startBtn:hover:not(:disabled),
+  #startBtn:active:not(:disabled) {
     box-shadow:
       0 0 16px rgba(0,255,255,0.85),
       0 0 42px rgba(0,140,255,0.5);
@@ -529,8 +532,11 @@
     }
     rms = Math.sqrt(rms / size);
 
-    // モバイル向け: かなり小さい音まで拾う
-    if (rms < 0.0025) {
+    // デバイス別のRMSしきい値
+    const isMobile = /Android|webOS|iPhone|iPad|iPod/i.test(navigator.userAgent);
+    const rmsThreshold = isMobile ? 0.002 : 0.0025;
+    
+    if (rms < rmsThreshold) {
       return { freq: null, rms, corr: 0 };
     }
 
@@ -777,12 +783,19 @@ Cents: ${freq ? cents.toFixed(2) + " cents" : "--"}`;
         }
       };
 
+      // モバイル検出
+      const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+      console.log('[ΔPhase] Mobile device:', isMobile);
+      
       const gUM = getUserMedia({
         audio: {
           channelCount: 1,
           echoCancellation: false,
           noiseSuppression: false,
-          autoGainControl: false
+          autoGainControl: false,
+          // モバイル向け追加制約
+          sampleRate: isMobile ? 48000 : undefined,
+          latency: isMobile ? 0.01 : undefined
         }
       });
 
@@ -802,17 +815,27 @@ Cents: ${freq ? cents.toFixed(2) + " cents" : "--"}`;
       sourceNode = audioCtx.createMediaStreamSource(stream);
 
       gainNode = audioCtx.createGain();
-      gainNode.gain.value = 4.5;
+      // モバイルはゲインを控えめに（クリッピング防止）
+      gainNode.gain.value = isMobile ? 2.0 : 4.5;
+      console.log('[ΔPhase] Gain:', gainNode.gain.value);
 
       analyser = audioCtx.createAnalyser();
-      analyser.fftSize = 4096;
+      // モバイルは小さめのFFTサイズ（レイテンシー削減）
+      analyser.fftSize = isMobile ? 2048 : 4096;
       analyser.smoothingTimeConstant = 0;
+      console.log('[ΔPhase] FFT Size:', analyser.fftSize, 'Sample Rate:', audioCtx.sampleRate);
 
       sourceNode.connect(gainNode);
       gainNode.connect(analyser);
 
       running = true;
-      statusEl.textContent = 'Tuning… (Aim sound at the mic)';
+      statusEl.textContent = isMobile 
+        ? '📱 チューニング中...（端末を楽器に近づけて弾いて）' 
+        : '🎸 チューニング中...';
+      
+      console.log('[ΔPhase] Audio pipeline ready');
+      console.log('[ΔPhase] Device:', isMobile ? 'Mobile' : 'Desktop');
+      console.log('[ΔPhase] Context latency:', audioCtx.baseLatency || 'N/A');
 
       requestAnimationFrame(updateLoop);
 
