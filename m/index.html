@@ -602,34 +602,49 @@
       }
     }
 
-       if (bestOffset === -1) {
+           if (bestOffset === -1) {
       return { freq: null, rms };
     }
 
-    // いったん通常通りの周波数を算出
+    // いったん通常どおりの周波数を算出
     let freq = sampleRate / bestOffset;
 
     // ===============================
     // ★ ギター向けオクターブ補正
     // ===============================
-    // 中域（だいたい 150〜500Hz）で倍音を取りがちな時に、
-    // 1オクターブ下が本物っぽければそっちを採用する。
-    if (freq > 150 && freq < 500) {
-      const lagFund   = bestOffset;                 // 今拾っている周期
-      const lagDouble = lagFund * 2.0;              // 1オクターブ下の周期
-      const iFund     = Math.round(lagFund);
-      const iDouble   = Math.round(lagDouble);
+    // 「倍音を先に拾ったっぽいとき」に、
+    // より遅い周期（= 低い周波数側）もチェックして、
+    // そっちもちゃんと相関が強ければ基音とみなして下に落とす。
+    //
+    // 70〜500Hz あたりはギターの基音〜1オクターブ上なので、
+    // この帯域だけ補正をかける。
+    if (freq > 70 && freq < 500) {
+      let baseLag   = bestOffset;
+      let baseIdx   = Math.round(baseLag);
+      let baseCorr  = correlations[baseIdx];
 
-      if (iDouble <= maxLag && iFund >= minLag && iFund <= maxLag) {
-        const cFund   = correlations[iFund];
-        const cDouble = correlations[iDouble];
+      let chosenLag  = baseLag;
+      let chosenCorr = baseCorr;
 
-        // 「2倍のラグでも相関が十分強い」＝基音がちゃんとある
-        // なら 1オクターブ下に補正する
-        if (cDouble > cFund * 0.85) {
-          bestOffset = lagDouble;
-          freq = sampleRate / bestOffset;
+      // 2倍・3倍・4倍のラグ（＝1〜2オクターブ下）をチェック
+      for (let m = 2; m <= 4; m++) {
+        const testLag = baseLag * m;
+        const idx     = Math.round(testLag);
+        if (idx < minLag || idx > maxLag) break;
+
+        const c = correlations[idx];
+        // 「少なくとも現状の 90% くらいの相関」があれば
+        // より遅い周期＝基音っぽいとみなしてそっちを優先
+        if (c >= chosenCorr * 0.9) {
+          chosenLag  = testLag;
+          chosenCorr = c;
         }
+      }
+
+      // もし、より遅い周期のほうが「ほぼ同じくらい良い」ならそっちを採用
+      if (chosenLag !== baseLag) {
+        bestOffset = chosenLag;
+        freq = sampleRate / bestOffset;
       }
     }
 
