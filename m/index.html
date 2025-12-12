@@ -175,7 +175,7 @@
     <canvas class="hud-canvas" id="hudCanvas"></canvas>
 
     <div class="hud-ring">
-      <!-- ★★★ ここにサークルHUDのSVGを入れる ★★★ -->
+      <!-- ★★★ ここにサークルHUDのSVGを入れる（必要なら） ★★★ -->
     </div>
   </div>
 </div>
@@ -240,7 +240,7 @@
     window.tunerFreq = f;
   };
   window.dpConfEMA = 0;
-  window.dpLocked = false;
+  window.dpLocked = false; // ロック状態共有
 
   function getFreq() { return window.tunerFreq || 440; }
 
@@ -251,7 +251,6 @@
   const MAX_SAMPLES = 9;
 
   function pushCentsSample(c, conf){
-    // ★ ロック用のサンプルも少し緩めに拾う
     if (conf < 0.25) {
       centsSamples.length = 0;
       return;
@@ -276,7 +275,6 @@
   let lockLastGoodTime = 0;
 
   function updateLock(nowMs, baseLock, conf){
-    // ★ スマホ用：信頼度しきい値ちょい緩め
     const ok = baseLock && conf >= 0.22;
     if (ok) lockLastGoodTime = nowMs;
 
@@ -315,7 +313,6 @@
     centsSm = lowpass(centsSm, smoothCents, dt, 4);
 
     const ang = needleAngleFromCents(centsSm);
-    // ★ ロック範囲少し広め
     const baseLock = Math.abs(centsSm) <= 10;
     const locked = updateLock(tNow, baseLock, conf);
 
@@ -387,7 +384,6 @@
     ctx.lineTo(Math.cos(BASE_ANG) * markR, Math.sin(BASE_ANG) * markR);
     ctx.stroke();
 
-    // ストロボ
     const strobeR0 = r * 0.57;
     const strobeR1 = r * 0.83;
     const strobeSegs = 72;
@@ -419,7 +415,6 @@
       ctx.stroke();
     }
 
-    // 針
     const needleLen  = r * 0.78;
     const needleBack = r * 0.18;
     const needleAng  = BASE_ANG + ang;
@@ -477,7 +472,7 @@
     ctx.textBaseline = 'middle';
     ctx.fillText(`${info.note}${info.oct}`, 0, r * 0.10);
 
-    ctx.fillStyle = 'rgba(120,200,255,0.9)`;
+    ctx.fillStyle = 'rgba(120,200,255,0.9)';
     ctx.font = `${r*0.11}px "SF Mono", ui-monospace`;
     ctx.fillText(`${freq.toFixed(2)} Hz`, 0, -r * 0.10);
 
@@ -536,8 +531,8 @@
     }
     rms = Math.sqrt(rms / size);
 
-    // ★ 感度さらに少しUP（0.003 → 0.002）
-    if (rms < 0.002) {
+    // ここは昔と同じくらいのしきい値
+    if (rms < 0.003) {
       return { freq: null, rms };
     }
 
@@ -575,8 +570,8 @@
       if (foundZeroCross) {
         if (correlations[lag] > correlations[lag - 1] && 
             correlations[lag] > correlations[lag + 1] &&
-            // ★ 相関しきい値も少し緩く（0.7 → 0.65）
-            correlations[lag] > 0.65) {
+            // ここも 0.7 くらいで止めとく
+            correlations[lag] > 0.7) {
           
           const y1 = correlations[lag - 1];
           const y2 = correlations[lag];
@@ -768,9 +763,8 @@ Cents: ${dispCents}`;
       sourceNode = audioCtx.createMediaStreamSource(stream);
 
       gainNode = audioCtx.createGain();
-
       const isMobile = /Android|webOS|iPhone|iPad|iPod/i.test(navigator.userAgent);
-      // ★ モバイルは強めブースト、PCは控えめ
+      // スマホは強め、PCは少し控えめ
       gainNode.gain.value = isMobile ? 6.0 : 3.5;
 
       analyser = audioCtx.createAnalyser();
