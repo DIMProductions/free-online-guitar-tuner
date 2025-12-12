@@ -548,7 +548,6 @@
   const statusEl  = document.getElementById('status');
   const metricsEl = document.getElementById('metrics');
 
-  let lastFreq = 0; 
   function autoCorrelate(buf, sampleRate) {
     const size = buf.length;
     let rms = 0;
@@ -738,7 +737,7 @@ Cents: ${dispCents}`;
 
   async function initTuner() {
     if (running) {
-      console.log('[ΔPhase] already running');
+      console.log('[Tuner] already running');
       return;
     }
 
@@ -801,7 +800,7 @@ Cents: ${dispCents}`;
 
       running = true;
       statusEl.textContent = 'Tuning… (Aim sound at the mic)';
-      console.log('[ΔPhase] audio pipeline ready');
+      console.log('[Tuner] audio pipeline ready');
 
       window.dbgAudioCtx = audioCtx;
       window.dbgAnalyser = analyser;
@@ -810,7 +809,7 @@ Cents: ${dispCents}`;
       requestAnimationFrame(updateLoop);
 
     } catch (err) {
-      console.error('[ΔPhase] initTuner error:', err);
+      console.error('[Tuner] initTuner error:', err);
       statusEl.textContent = 'Error: ' + err.message + '\nHTTPS and microphone permission are required.';
       startBtn.disabled = false;
     }
