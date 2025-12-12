@@ -175,7 +175,7 @@
     <canvas class="hud-canvas" id="hudCanvas"></canvas>
 
     <div class="hud-ring">
-      <!-- ★★★ ここにサークルHUDのSVGを入れる ★★★ -->
+      <!-- ★★★ ここにサークルHUDのSVGを入れる（今は空のままでOK） ★★★ -->
     </div>
   </div>
 </div>
@@ -240,7 +240,7 @@
     window.tunerFreq = f;
   };
   window.dpConfEMA = 0;
-  window.dpLocked = false; // ロック状態を外にも共有
+  window.dpLocked = false;
 
   function getFreq() { return window.tunerFreq || 440; }
 
@@ -275,7 +275,6 @@
   let lockLastGoodTime = 0;
 
   function updateLock(nowMs, baseLock, conf){
-    // ★ スマホ向け：conf 緩め
     const ok = baseLock && conf >= 0.25;
     if (ok) lockLastGoodTime = nowMs;
 
@@ -287,12 +286,10 @@
     } else if (lockState === "locking") {
       if (!ok) {
         lockState = "idle";
-      // ★ ロックまで速く
       } else if (nowMs - lockEnterTime > 50) {
         lockState = "locked";
       }
     } else if (lockState === "locked") {
-      // ★ ロック解除まで粘らせる
       if (nowMs - lockLastGoodTime > 500) {
         lockState = "idle";
       }
@@ -316,11 +313,9 @@
     centsSm = lowpass(centsSm, smoothCents, dt, 4);
 
     const ang = needleAngleFromCents(centsSm);
-    // ★ ロック範囲ちょい広め
     const baseLock = Math.abs(centsSm) <= 8;
     const locked = updateLock(tNow, baseLock, conf);
 
-    // ロック状態を共有
     window.dpLocked = locked;
 
     const w = canvas.width / DPR;
@@ -389,7 +384,6 @@
     ctx.lineTo(Math.cos(BASE_ANG) * markR, Math.sin(BASE_ANG) * markR);
     ctx.stroke();
 
-    // ストロボ描画（針の下）
     const strobeR0 = r * 0.57;
     const strobeR1 = r * 0.83;
     const strobeSegs = 72;
@@ -421,7 +415,6 @@
       ctx.stroke();
     }
 
-    // 針描画（ストロボの上）
     const needleLen  = r * 0.78;
     const needleBack = r * 0.18;
     const needleAng  = BASE_ANG + ang;
@@ -473,12 +466,13 @@
     ctx.arc(0, 0, r * 0.38, 0, Math.PI * 2);
     ctx.fill();
 
-    // ノートを大きく、Hzを少し小さく
+    const info2 = analyze(freq, a4);
+
     ctx.fillStyle = '#e8f7ff';
     ctx.font = `${r*0.22}px "SF Mono", ui-monospace, Menlo, Consolas, monospace`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(`${info.note}${info.oct}`, 0, r * 0.10);
+    ctx.fillText(`${info2.note}${info2.oct}`, 0, r * 0.10);
 
     ctx.fillStyle = 'rgba(120,200,255,0.9)';
     ctx.font = `${r*0.11}px "SF Mono", ui-monospace`;
@@ -500,8 +494,6 @@
 
   const NOTE_NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
   const A4_REF = 440.0;
-
-  // 公開版ではデバッグ非表示
   const SHOW_DEBUG = false;
 
   function freqToNoteInfo(freq) {
@@ -521,135 +513,63 @@
   let running     = false;
   let confEMA     = 0;
 
-  let testOsc     = null;
-  let testGain    = null;
-
-  // ロック中に表示をホールドする用
-  let lastLockFreq  = null;
-  let lastLockNote  = "--";
-  let lastLockCents = 0;
-  let wasLocked = false;
-  let lockReleaseTime = 0;
-  const GRACE_PERIOD_MS = 500;
-
   const startBtn  = document.getElementById('startBtn');
   const statusEl  = document.getElementById('status');
   const metricsEl = document.getElementById('metrics');
 
+  // ===== autoCorrelate（差分ベース） =====
   function autoCorrelate(buf, sampleRate) {
-    const size = buf.length;
+    const SIZE = buf.length;
     let rms = 0;
-    for (let i = 0; i < size; i++) {
+    for (let i = 0; i < SIZE; i++) {
       const v = buf[i];
       rms += v * v;
     }
-    rms = Math.sqrt(rms / size);
+    rms = Math.sqrt(rms / SIZE);
 
-    // ★ モバイル向け：小さい音でも拾う
-    if (rms < 0.0025) {
-      return { freq: null, rms };
+    // モバイル用：かなり小さい音まで拾う
+    if (rms < 0.003) {
+      return { freq: null, rms, corr: 0 };
     }
 
-    const minLag = Math.floor(sampleRate / 2000);
-    const maxLag = Math.floor(sampleRate / 60);
-    
-    const correlations = new Float32Array(maxLag + 1);
-    let maxCorr = 0;
-
-    for (let lag = minLag; lag <= maxLag; lag++) {
-      let corr = 0;
-      const corrLen = size - lag;
-      for (let i = 0; i < corrLen; i++) {
-        corr += buf[i] * buf[i + lag];
-      }
-      correlations[lag] = corr / corrLen;
-      if (correlations[lag] > maxCorr) maxCorr = correlations[lag];
-    }
-
-    if (maxCorr > 0) {
-      for (let lag = minLag; lag <= maxLag; lag++) {
-        correlations[lag] /= maxCorr;
-      }
-    }
-
-    let foundZeroCross = false;
     let bestOffset = -1;
-    let bestCorr = 0;
+    let bestCorrelation = 0;
+    let foundGoodCorrelation = false;
+    let lastCorrelation = 1;
 
-    for (let lag = minLag + 1; lag < maxLag - 1; lag++) {
-      if (!foundZeroCross && correlations[lag - 1] < 0 && correlations[lag] >= 0) {
-        foundZeroCross = true;
+    // 周波数レンジ：50〜1000Hzぐらい
+    const MIN_SAMPLES = Math.floor(sampleRate / 1000); // 上限
+    const MAX_SAMPLES = Math.floor(sampleRate / 50);   // 下限
+
+    for (let offset = MIN_SAMPLES; offset <= MAX_SAMPLES; offset++) {
+      let correlation = 0;
+
+      for (let i = 0; i < MAX_SAMPLES; i++) {
+        const diff = buf[i] - buf[i + offset];
+        correlation += Math.abs(diff);
       }
-      
-      if (foundZeroCross) {
-        if (correlations[lag] > correlations[lag - 1] && 
-            correlations[lag] > correlations[lag + 1] &&
-            correlations[lag] > 0.65) {
-          
-          const y1 = correlations[lag - 1];
-          const y2 = correlations[lag];
-          const y3 = correlations[lag + 1];
-          const denom = y1 - 2 * y2 + y3;
-          if (Math.abs(denom) > 1e-6) {
-            const offset = (y1 - y3) / (2 * denom);
-            bestOffset = lag + offset;
-          } else {
-            bestOffset = lag;
-          }
-          bestCorr = correlations[lag];
-          break;
-        }
+      correlation = 1 - (correlation / MAX_SAMPLES); // 0〜1 に正規化
+
+      if (correlation > 0.9 && correlation > lastCorrelation) {
+        foundGoodCorrelation = true;
+      } else if (foundGoodCorrelation && correlation < lastCorrelation) {
+        break;
       }
+
+      if (correlation > bestCorrelation) {
+        bestCorrelation = correlation;
+        bestOffset = offset;
+      }
+
+      lastCorrelation = correlation;
     }
 
-           if (bestOffset === -1) {
-      return { freq: null, rms };
+    if (bestCorrelation > 0.01 && bestOffset !== -1) {
+      const freq = sampleRate / bestOffset;
+      return { freq, rms, corr: bestCorrelation };
     }
 
-    // いったん通常どおりの周波数を算出
-    let freq = sampleRate / bestOffset;
-
-    // ===============================
-    // ★ ギター向けオクターブ補正
-    // ===============================
-    // 「倍音を先に拾ったっぽいとき」に、
-    // より遅い周期（= 低い周波数側）もチェックして、
-    // そっちもちゃんと相関が強ければ基音とみなして下に落とす。
-    //
-    // 70〜500Hz あたりはギターの基音〜1オクターブ上なので、
-    // この帯域だけ補正をかける。
-    if (freq > 70 && freq < 500) {
-      let baseLag   = bestOffset;
-      let baseIdx   = Math.round(baseLag);
-      let baseCorr  = correlations[baseIdx];
-
-      let chosenLag  = baseLag;
-      let chosenCorr = baseCorr;
-
-      // 2倍・3倍・4倍のラグ（＝1〜2オクターブ下）をチェック
-      for (let m = 2; m <= 4; m++) {
-        const testLag = baseLag * m;
-        const idx     = Math.round(testLag);
-        if (idx < minLag || idx > maxLag) break;
-
-        const c = correlations[idx];
-        // 「少なくとも現状の 90% くらいの相関」があれば
-        // より遅い周期＝基音っぽいとみなしてそっちを優先
-        if (c >= chosenCorr * 0.9) {
-          chosenLag  = testLag;
-          chosenCorr = c;
-        }
-      }
-
-      // もし、より遅い周期のほうが「ほぼ同じくらい良い」ならそっちを採用
-      if (chosenLag !== baseLag) {
-        bestOffset = chosenLag;
-        freq = sampleRate / bestOffset;
-      }
-    }
-
-    return { freq, rms, corr: bestCorr };
-
+    return { freq: null, rms, corr: 0 };
   }
 
   function updateLoop() {
@@ -661,12 +581,12 @@
 
     const ac = autoCorrelate(timeData, audioCtx.sampleRate);
     let freq = ac.freq;
-    let rms = ac.rms || 0;
-    let db = rms > 0 ? 20 * Math.log10(rms) : -120;
+    const rms = ac.rms || 0;
+    const db = rms > 0 ? 20 * Math.log10(rms) : -120;
+    const corr = ac.corr || 0;
 
     let noteText = "--";
     let cents = 0;
-    let instConf = 0;
 
     if (freq && freq > 20 && freq < 5000) {
       const info = freqToNoteInfo(freq);
@@ -674,17 +594,12 @@
         noteText = `${info.note}${info.oct}`;
         cents = info.cents;
       }
-
-      const centsNorm = Math.min(50, Math.abs(cents));
-      const centsScore = 1 - (centsNorm / 50);
-      const dbClamp = Math.max(-80, Math.min(-10, db));
-      const dbNorm = (dbClamp + 80) / 70;
-      instConf = Math.max(0, Math.min(1, (centsScore * 0.7 + dbNorm * 0.3)));
     } else {
       freq = null;
     }
 
     const alpha = 0.15;
+    const instConf = corr;
     confEMA = (1 - alpha) * confEMA + alpha * instConf;
     if (!isFinite(confEMA)) confEMA = 0;
 
@@ -695,69 +610,18 @@
     }
     window.dpConfEMA = confEMA;
 
-    const lockedNow = (window.dpLocked === true);
-    const nowTime = performance.now();
-
-    const justLocked = lockedNow && !wasLocked;
-    const justUnlocked = !lockedNow && wasLocked;
-
-    if (justUnlocked) {
-      lockReleaseTime = nowTime;
-    }
-
-    const inGracePeriod = (nowTime - lockReleaseTime) < GRACE_PERIOD_MS;
-
-    if (freq && noteText !== "--" && confEMA > 0.3) {
-      lastLockFreq  = freq;
-      lastLockNote  = noteText;
-      lastLockCents = cents;
-    }
-
-    if (justLocked && lastLockFreq === null) {
-      const hudFreq = window.tunerFreq;
-      if (hudFreq && hudFreq !== 440) {
-        const hudInfo = freqToNoteInfo(hudFreq);
-        if (hudInfo) {
-          lastLockFreq = hudFreq;
-          lastLockNote = `${hudInfo.note}${hudInfo.oct}`;
-          lastLockCents = hudInfo.cents;
-        }
-      }
-    }
-
-    let dispFreq, dispNote, dispCents;
-
-    if ((lockedNow || inGracePeriod) && lastLockFreq !== null) {
-      dispFreq  = lastLockFreq.toFixed(2) + " Hz";
-      dispNote  = lastLockNote;
-      dispCents = lastLockCents.toFixed(2) + " cents";
-    } else if (freq && noteText !== "--") {
-      dispFreq  = freq.toFixed(2) + " Hz";
-      dispNote  = noteText;
-      dispCents = cents.toFixed(2) + " cents";
-    } else if (!freq && lastLockFreq !== null) {
-      dispFreq  = lastLockFreq.toFixed(2) + " Hz";
-      dispNote  = lastLockNote;
-      dispCents = lastLockCents.toFixed(2) + " cents";
-    } else {
-      dispFreq  = "--";
-      dispNote  = "--";
-      dispCents = "--";
-    }
-
-    wasLocked = lockedNow;
-
     let text = '';
     if (SHOW_DEBUG) {
       text +=
 `RMS:   ${rms.toFixed(5)}
 dBFS:  ${db.toFixed(1)}
+Corr:  ${corr.toFixed(2)}
 Conf:  ${confEMA.toFixed(2)}\n`;
     }
     text +=
-`Freq:  ${dispFreq}
-Note:  ${dispNote}
-Cents: ${dispCents}`;
+`Freq:  ${freq ? freq.toFixed(2) + " Hz" : "--"}
+Note:  ${noteText}
+Cents: ${freq ? cents.toFixed(2) + " cents" : "--"}`;
 
     if (metricsEl) {
       metricsEl.textContent = text;
@@ -768,7 +632,6 @@ Cents: ${dispCents}`;
 
   async function initTuner() {
     if (running) {
-      console.log('[ΔPhase] already running');
       return;
     }
 
@@ -821,22 +684,18 @@ Cents: ${dispCents}`;
       sourceNode = audioCtx.createMediaStreamSource(stream);
 
       gainNode = audioCtx.createGain();
-      // ★ スマホ向け：入力大きめにブースト
-      gainNode.gain.value = 5.5;
+      // モバイル向け：入力ブースト
+      gainNode.gain.value = 4.5;
 
       analyser = audioCtx.createAnalyser();
-      analyser.fftSize = 2048;
+      analyser.fftSize = 4096;
+      analyser.smoothingTimeConstant = 0;
 
       sourceNode.connect(gainNode);
       gainNode.connect(analyser);
 
       running = true;
       statusEl.textContent = 'Tuning… (Aim sound at the mic)';
-      console.log('[ΔPhase] audio pipeline ready');
-
-      window.dbgAudioCtx = audioCtx;
-      window.dbgAnalyser = analyser;
-      window.dbgGainNode = gainNode;
 
       requestAnimationFrame(updateLoop);
 
@@ -847,55 +706,10 @@ Cents: ${dispCents}`;
     }
   }
 
-  async function startSine440Test() {
-    console.log('[Test] running:', running);
-    if (running) {
-      console.log('[Test] already running, skip');
-      return;
-    }
-    
-    const AC = window.AudioContext || window.webkitAudioContext;
-    if (!audioCtx) audioCtx = new AC();
-    console.log('[Test] audioCtx:', audioCtx);
-    
-    if (audioCtx.state === "suspended") await audioCtx.resume();
-
-    analyser = audioCtx.createAnalyser();
-    analyser.fftSize = 4096;
-    analyser.smoothingTimeConstant = 0.0;
-    console.log('[Test] analyser created');
-
-    testOsc = audioCtx.createOscillator();
-    testOsc.type = "sine";
-    testOsc.frequency.value = 440;
-
-    testGain = audioCtx.createGain();
-    testGain.gain.value = 1.0;
-
-    testOsc.connect(testGain);
-    testGain.connect(analyser);
-    console.log('[Test] connected: osc -> gain -> analyser');
-
-    testOsc.start();
-    running = true;
-    statusEl.textContent = '🎵 440Hz Test...';
-    console.log('[Test] started');
-    
-    requestAnimationFrame(updateLoop);
-  }
-
-  window.startSine440Test = startSine440Test;
-
   startBtn.addEventListener('click', () => {
     initTuner();
   });
 
-  const testBtn = document.getElementById('testBtn');
-  if (testBtn) {
-    testBtn.addEventListener('click', () => {
-      startSine440Test();
-    });
-  }
 })();
 </script>
 
