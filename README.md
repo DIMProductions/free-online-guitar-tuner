@@ -36,6 +36,8 @@ Allow microphone access when prompted.
 
 free-online-guitar-tuner/
 ├── index.html      # main tuner
+├── m/                # Mobile
+│    └── index.html
 └── README.md
 
 ```
@@ -59,4 +61,5 @@ For collaboration or licensing inquiries:
 
 © 2025 DIMProductions.
 You may use or modify this for personal or educational purposes.  
+
 Commercial redistribution requires permission.
