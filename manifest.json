@@ -1,0 +1,17 @@
+{
+  "name": "Guitar Tuner",
+  "start_url": "/m/", 
+  "icons": [
+    {
+      "src": "/assets/fork192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/assets/fork512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
