@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <title>Free Online Guitar & Instrument Tuner</title>
+  <link rel="preload" as="image" href="../assets/dial.webp">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="description" content="Free online tuner that runs in your browser. Supports guitar, bass, and other instruments using your device microphone. Real-time circular HUD with note, frequency (Hz), and cent deviation.">
 
@@ -228,7 +229,7 @@
     <canvas class="hud-canvas" id="hudCanvas"></canvas>
 
     <div class="hud-ring">
-      <img src="../assets/dial.png" alt="Dial Frame" class="ring-image">
+      <img src="../assets/dial.webp" alt="Dial Frame" class="ring-image">
     </div>
   </div>
 </div>
@@ -1050,5 +1051,4 @@ Cents: ${dispCents}`;
 </script>
 
 </body>
-
 </html>
